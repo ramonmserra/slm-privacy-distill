@@ -1,0 +1,23 @@
+# Segredos -- nunca commitar
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# IDE
+.idea/
+
+# Saida de runtime (datasets gerados, telemetria, artefatos de treino)
+data/
+
+# Documentos de trabalho locais ficam fora do git; os de referencia entram
+docs/*
+!docs/ARQUITETURA.md
+!docs/HISTORICO_DECISOES.md
+CLAUDE.md

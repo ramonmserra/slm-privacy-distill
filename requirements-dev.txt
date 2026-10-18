@@ -1,0 +1,7 @@
+# Dependencias de DESENVOLVIMENTO (nao entram no runtime).
+#   pip install -r requirements.txt -r requirements-dev.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+# Pega NameError que so' aparece em runtime (funcao renomeada chamando nome
+# nao importado): `python -m pyflakes app/ tests/ scripts/`
+pyflakes==3.4.0

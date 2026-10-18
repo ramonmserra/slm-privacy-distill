@@ -1,0 +1,20 @@
+# Servicos locais de apoio. A API roda no host com `uvicorn main:app --reload`.
+#
+#   docker compose up -d ollama
+#   docker compose exec ollama ollama pull qwen3:1.7b
+#
+# O Ollama expoe um endpoint OpenAI-compatible em http://localhost:11434/v1,
+# que e' o que `LOCAL_LLM_BASE_URL` aponta. Sem GPU utilizavel (a MX450 tem
+# 2 GB), ele roda em CPU -- e' o cenario on-premise que a pesquisa mede.
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: gena-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_models:

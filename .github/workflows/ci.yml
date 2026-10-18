@@ -1,0 +1,48 @@
+# CI de todo pull request. Cada passo existe por um risco mapeado no projeto
+# de referencia -- ver os comentarios.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualidade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Instalacao LIMPA em ambiente novo: pin incompativel quebra aqui, nao
+      # na maquina de quem ja tinha a versao certa instalada.
+      - name: Instalacao limpa
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # NameError que so' aparece em runtime.
+      - name: pyflakes
+        run: python -m pyflakes app/ tests/ scripts/
+
+      # Blocos de complexidade D/E em app/ sao regressao.
+      - name: Complexidade ciclomatica
+        run: |
+          pip install radon
+          python -m radon cc -n D app/ | tee /tmp/radon.txt
+          test ! -s /tmp/radon.txt || (echo "Blocos D/E encontrados em app/" && exit 1)
+
+      # Suite sem LLM real (marker `llm` fica fora por default).
+      - name: pytest (sem llm)
+        run: python -m pytest
+        env:
+          AUTH_MODE: disabled
+          APP_ENV: test
+
+      - name: Auditoria de dependencias e segredos
+        run: |
+          pip install pip-audit bandit
+          pip-audit -r requirements.txt || true   # informativo
+          bandit -q -r app/ || true

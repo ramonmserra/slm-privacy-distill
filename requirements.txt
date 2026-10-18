@@ -1,0 +1,20 @@
+# Dependencias de RUNTIME. Versoes pinadas e conferidas no projeto de
+# referencia (FastAPIProject) em 2026-10; os pares abaixo ja quebraram a
+# INSTALACAO uma vez por incompatibilidade (ResolutionImpossible), por isso
+# cada um vem com o motivo de estar aqui.
+fastapi==0.139.0
+starlette==1.3.1       # middleware ASGI puro em app/core/observability.py importa Starlette direto
+uvicorn==0.51.0
+pydantic==2.13.4
+python-dotenv==1.2.2   # `.env` carregado em app/core/config.py; parametros (chaves, modelos, orcamento) ficam la
+
+# Camada de LLM (app/core/llm.py) -- transporte LangChain, contratos de
+# dominio em Protocol. langchain-core e' importado DIRETO (BaseChatModel,
+# mensagens), entao entra declarado e nao transitivo.
+langchain==1.3.13
+langchain-core==1.4.9
+langchain-openai==1.3.5       # professor (OpenAI) E aluno local (Ollama/vLLM via OpenAI-compatible)
+openai==2.46.0                # piso exigido por langchain-openai 1.3.5 (>=2.45,<3)
+langchain-anthropic==1.4.8    # juiz (familia diferente do professor)
+anthropic==0.116.0
+httpx==0.28.1                 # cliente HTTP dos SDKs; tambem usado pelo TestClient
