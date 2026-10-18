@@ -20,4 +20,11 @@ data/
 # assistente) ficam fora do git; so' a arquitetura e' publica
 docs/*
 !docs/ARQUITETURA.md
+!docs/GUIA_DE_EXECUCAO.md
 CLAUDE.md
+
+# Saidas de treino local e pesos (grandes; o registro fica em data/treinos via API)
+saida*/
+.venv-treino/
+*.gguf
+*.safetensors

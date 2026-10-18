@@ -25,7 +25,7 @@ jobs:
 
       # NameError que so' aparece em runtime.
       - name: pyflakes
-        run: python -m pyflakes app/ tests/ scripts/
+        run: python -m pyflakes app/ tests/ scripts/ treino/
 
       # Blocos de complexidade D/E em app/ sao regressao.
       - name: Complexidade ciclomatica

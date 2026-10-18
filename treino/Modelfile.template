@@ -1,0 +1,28 @@
+# Modelfile do Ollama para o aluno treinado (Qwen3 fundido, em GGUF).
+#
+#   ollama create qwen3-1.7b-lgpd-ab12cd34 -f Modelfile
+#   ollama run qwen3-1.7b-lgpd-ab12cd34 "O que e' dado pessoal sensivel?"
+#
+# SEM `SYSTEM`: o system prompt do aluno (PROMPT_DO_ALUNO) e' enviado pela
+# API a cada requisicao, byte a byte o mesmo do treino. Fixa-lo aqui
+# duplicaria a instrucao.
+#
+# O TEMPLATE e' ChatML, o formato do Qwen3, e abre o turno do assistente com
+# o bloco <think> vazio -- o MESMO prefixo que `treino/sft_lora.py` antepoe a
+# resposta no treino (`--prefixo-do-assistente`). Treino e inferencia veem a
+# mesma sequencia; e' a razao de o prefixo existir nos dois lados.
+FROM ./modelo-q4_k_m.gguf
+
+TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{ end }}<|im_start|>assistant
+<think>
+
+</think>
+
+"""
+
+PARAMETER stop <|im_end|>
+PARAMETER stop <|im_start|>
+PARAMETER temperature 0
+PARAMETER num_ctx 4096

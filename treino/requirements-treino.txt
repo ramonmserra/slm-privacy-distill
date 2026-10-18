@@ -1,0 +1,15 @@
+# Dependencias do TREINO (fora da API). No Colab, instale com:
+#   pip install -r treino/requirements-treino.txt
+# torch vem pre-instalado no Colab; na CPU local instale a build CPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Versoes com piso, nao pin: o Colab atualiza o torch por conta propria e um
+# pin exato quebraria a instalacao la'. O run.json grava as versoes efetivas.
+# trl>=0.19: SFTConfig.max_length e formato conversacional prompt/completion
+# (perda so' na completion), os dois usados em sft_lora.py.
+transformers>=4.51
+trl>=0.19
+peft>=0.15
+datasets>=3.0
+accelerate>=1.0
+# 4-bit (perfil colab-t4-4bit): so' funciona com GPU
+bitsandbytes>=0.45; platform_system == "Linux"

@@ -454,25 +454,20 @@ async def ainvoke_structured(
     )
 
 
-async def ainvoke_text(
-    chat_model: "BaseChatModel",
-    messages: list[dict[str, Any]],
-    *,
-    model_id: str,
-    etapa: Any = None,
-) -> str:
-    """Invoca esperando texto livre e contabiliza o consumo. Normaliza o
-    `content` (string ou lista de blocos), concatenando so' os blocos de
-    texto -- blocos de raciocinio nao viram resposta."""
+class RespostaDeTexto(BaseModel):
+    """Texto livre + o consumo DESTA chamada. A avaliacao mede tokens por
+    item; o agregado da telemetria nao consegue atribuir por item quando
+    varias chamadas correm em paralelo."""
 
-    from app.core.llm_gate import portao_do_llm
-    from app.core.llm_usage import record_langchain_usage
+    texto: str
+    input_tokens: int = 0
+    output_tokens: int = 0
 
-    async with portao_do_llm(model_id, messages=messages):
-        message = await chat_model.ainvoke(messages)
-    record_langchain_usage(model_id, message, etapa=etapa)
 
-    content = message.content
+def _texto_do_conteudo(content: Any) -> str:
+    """Normaliza o `content` (string ou lista de blocos), concatenando so' os
+    blocos de texto -- blocos de raciocinio nao viram resposta."""
+
     if isinstance(content, str):
         return content
     return "".join(
@@ -480,6 +475,43 @@ async def ainvoke_text(
         for bloco in content
         if isinstance(bloco, dict) and bloco.get("type", "text") == "text"
     )
+
+
+async def ainvoke_text_detalhado(
+    chat_model: "BaseChatModel",
+    messages: list[dict[str, Any]],
+    *,
+    model_id: str,
+    etapa: Any = None,
+) -> RespostaDeTexto:
+    """Invoca esperando texto livre, contabiliza o consumo e devolve texto e
+    tokens da chamada."""
+
+    from app.core.llm_gate import portao_do_llm
+    from app.core.llm_usage import record_langchain_usage
+
+    async with portao_do_llm(model_id, messages=messages):
+        message = await chat_model.ainvoke(messages)
+    record_langchain_usage(model_id, message, etapa=etapa)
+    uso = getattr(message, "usage_metadata", None) or {}
+    return RespostaDeTexto(
+        texto=_texto_do_conteudo(message.content),
+        input_tokens=int(uso.get("input_tokens") or 0),
+        output_tokens=int(uso.get("output_tokens") or 0),
+    )
+
+
+async def ainvoke_text(
+    chat_model: "BaseChatModel",
+    messages: list[dict[str, Any]],
+    *,
+    model_id: str,
+    etapa: Any = None,
+) -> str:
+    """Invoca esperando texto livre e contabiliza o consumo."""
+
+    resposta = await ainvoke_text_detalhado(chat_model, messages, model_id=model_id, etapa=etapa)
+    return resposta.texto
 
 
 class StructuredLlmClient:
@@ -559,16 +591,19 @@ class StructuredLlmClient:
             etapa=self.etapa,
         )
 
-    async def text(self, *, system: str, user: str, max_tokens: int | None = None) -> str:
-        """Uma chamada de texto livre -- e' como o ALUNO e' medido (a resposta
-        juridica em prosa), ja que exigir JSON dele mediria formato, nao
-        conteudo."""
+    async def text_detalhado(self, *, system: str, user: str, max_tokens: int | None = None) -> RespostaDeTexto:
+        """Uma chamada de texto livre com os tokens da chamada -- e' como o
+        ALUNO e' medido (a resposta juridica em prosa), ja que exigir JSON
+        dele mediria formato, nao conteudo."""
 
         limit = max_tokens or self.max_tokens
         model_id = self.model_id
-        return await ainvoke_text(
+        return await ainvoke_text_detalhado(
             self._model(model_id, limit),
             [system_message(system, model_id, cacheable=self.cache_de_prompt), user_message(user, model_id)],
             model_id=model_id,
             etapa=self.etapa,
         )
+
+    async def text(self, *, system: str, user: str, max_tokens: int | None = None) -> str:
+        return (await self.text_detalhado(system=system, user=user, max_tokens=max_tokens)).texto

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GENA — Painel da pesquisa</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topo">
+  <div class="marca">GENA <span>destilação de SLM · LGPD</span></div>
+  <nav class="abas" role="tablist">
+    <button data-aba="anotacao" class="ativa">Anotação</button>
+    <button data-aba="inspecao">Inspeção</button>
+    <button data-aba="painel">Painel</button>
+  </nav>
+  <div class="chave">
+    <input id="api-key" type="password" placeholder="X-API-Key" autocomplete="off">
+    <button id="salvar-chave" title="Guardar a chave nesta sessão do navegador">Entrar</button>
+    <span id="estado-chave" class="pastilha"></span>
+  </div>
+</header>
+
+<main>
+  <!-- ============================ ANOTAÇÃO ============================ -->
+  <section id="aba-anotacao" class="aba ativa">
+    <div class="barra">
+      <label>Run <select id="an-run"></select></label>
+      <label>Anotador <input id="an-anotador" placeholder="seu nome" maxlength="60"></label>
+      <label class="check"><input id="an-pular" type="checkbox" checked> pular itens que já anotei</label>
+      <label class="check"><input id="an-ver-juiz" type="checkbox"> mostrar veredito do juiz (quebra a cegueira)</label>
+      <button id="an-carregar">Carregar itens</button>
+      <span id="an-progresso" class="pastilha"></span>
+    </div>
+
+    <div id="an-vazio" class="aviso">Escolha um run de avaliação e seu nome. Anote <b>correto</b> e <b>lastro</b> com a mesma definição da rubrica do juiz, sem olhar o veredito dele.</div>
+
+    <article id="an-item" class="cartao oculto">
+      <div class="linha-topo">
+        <span class="rotulo" id="an-item-id"></span>
+        <span class="rotulo" id="an-item-tipo"></span>
+        <span class="rotulo" id="an-item-abstencao"></span>
+      </div>
+      <h3>Pergunta</h3>
+      <p id="an-pergunta" class="texto"></p>
+      <h3>Resposta do modelo</h3>
+      <p id="an-resposta" class="texto resposta"></p>
+      <details>
+        <summary>Referência (resposta do professor ou critérios esperados)</summary>
+        <p id="an-referencia" class="texto"></p>
+        <p class="mini">Artigos de referência: <span id="an-artigos"></span></p>
+      </details>
+      <details id="an-rastro-box">
+        <summary>Texto dos artigos de referência (rastro)</summary>
+        <div id="an-rastro" class="rastro"></div>
+      </details>
+      <details id="an-juiz-box" class="oculto">
+        <summary>Veredito do juiz</summary>
+        <pre id="an-juiz" class="json"></pre>
+      </details>
+
+      <div class="form">
+        <fieldset>
+          <legend>Correto? <small>chega à conclusão jurídica da referência / atende os critérios essenciais</small></legend>
+          <label><input type="radio" name="an-correto" value="true"> Sim</label>
+          <label><input type="radio" name="an-correto" value="false"> Não</label>
+        </fieldset>
+        <fieldset>
+          <legend>Com lastro? <small>toda afirmação normativa está nos artigos de referência</small></legend>
+          <label><input type="radio" name="an-grounded" value="true"> Sim</label>
+          <label><input type="radio" name="an-grounded" value="false"> Não</label>
+          <label><input type="radio" name="an-grounded" value="" checked> Não sei / não se aplica</label>
+        </fieldset>
+        <label class="bloco">Comentário <input id="an-comentario" maxlength="500" placeholder="opcional"></label>
+        <div class="acoes">
+          <button id="an-salvar" class="primario">Salvar e próximo</button>
+          <button id="an-pular-item">Pular</button>
+        </div>
+      </div>
+    </article>
+
+    <details class="cartao" id="an-calibracao-box">
+      <summary>Calibração do juiz neste run</summary>
+      <button id="an-calibrar">Recalcular</button>
+      <pre id="an-calibracao" class="json"></pre>
+    </details>
+  </section>
+
+  <!-- ============================ INSPEÇÃO ============================ -->
+  <section id="aba-inspecao" class="aba">
+    <div class="barra">
+      <label>Fonte
+        <select id="in-fonte">
+          <option value="sintese">Síntese — exemplos</option>
+          <option value="sintese-descartados">Síntese — descartados</option>
+          <option value="filtro-aprovados">Filtro — aprovados</option>
+          <option value="filtro-reprovados">Filtro — reprovados</option>
+          <option value="on-policy">On-policy — amostras</option>
+          <option value="on-policy-reprovadas">On-policy — reprovadas</option>
+          <option value="avaliacao-erros">Avaliação — itens com erro</option>
+          <option value="avaliacao-todos">Avaliação — todos os itens</option>
+        </select>
+      </label>
+      <label>Job / run <select id="in-job"></select></label>
+      <label>Por página <select id="in-limite"><option>10</option><option selected>20</option><option>50</option></select></label>
+      <button id="in-carregar">Carregar</button>
+      <button id="in-anterior">◀</button>
+      <button id="in-proximo">▶</button>
+      <span id="in-pagina" class="pastilha"></span>
+    </div>
+    <div id="in-resumo" class="aviso"></div>
+    <div id="in-lista" class="lista"></div>
+  </section>
+
+  <!-- ============================ PAINEL ============================ -->
+  <section id="aba-painel" class="aba">
+    <div class="grade">
+      <article class="cartao">
+        <h3>Saúde e provedores <button id="pa-atualizar" class="mini-btn">atualizar</button></h3>
+        <pre id="pa-saude" class="json"></pre>
+      </article>
+      <article class="cartao">
+        <h3>Custo por etapa</h3>
+        <table id="pa-custos" class="tabela"></table>
+      </article>
+    </div>
+
+    <article class="cartao">
+      <h3>Jobs</h3>
+      <table id="pa-jobs" class="tabela"></table>
+    </article>
+
+    <article class="cartao">
+      <h3>Runs de avaliação</h3>
+      <table id="pa-runs" class="tabela"></table>
+    </article>
+
+    <div class="grade">
+      <article class="cartao">
+        <h3>Comparação pareada</h3>
+        <div class="barra">
+          <label>A (referência) <select id="pa-cmp-a"></select></label>
+          <label>B (candidato) <select id="pa-cmp-b"></select></label>
+          <button id="pa-comparar">Comparar</button>
+        </div>
+        <div id="pa-cmp-leitura" class="aviso"></div>
+        <pre id="pa-cmp" class="json"></pre>
+      </article>
+      <article class="cartao">
+        <h3>Tabela das condições</h3>
+        <p class="mini">Marque os runs na tabela acima e dê um rótulo a cada um (ex.: C0 professor).</p>
+        <div id="pa-rotulos"></div>
+        <button id="pa-tabela">Gerar tabela</button>
+        <div id="pa-tabela-html"></div>
+        <details><summary>Markdown para o TCC</summary><pre id="pa-tabela-md" class="json"></pre></details>
+      </article>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast oculto"></div>
+<script src="app.js"></script>
+</body>
+</html>

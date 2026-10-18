@@ -12,18 +12,17 @@ O que e' DETERMINISTICO aqui (e por isso mora no engine, nao no prompt):
 - a varredura anti-injecao da saida.
 
 O professor so' escreve pergunta, raciocinio e resposta. Tudo o que decide
-o destino de um exemplo e' codigo.
+o destino de um exemplo e' codigo. O laco de lotes (concorrencia, orcamento,
+erro por lote) e' o compartilhado em `app.services.lotes`.
 """
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import logging
 import random
 import uuid
 
-from app.core.erros import OrcamentoExcedido
 from app.core.llm_usage import etapa_scope, job_scope, tracker
 from app.repositories.sintese_repository import SinteseRepository
 from app.schemas.comum import Etapa
@@ -39,6 +38,7 @@ from app.schemas.sintese import (
 from app.services.corpus.ingestao import Corpus
 from app.services.corpus.referencias import normalizar_referencias
 from app.services.injecao import marca_de_injecao
+from app.services.lotes import ExecutorDeLotes, dividir
 from app.services.sintese.dedup import Deduplicador, carregar_banco_inicial, hash_da_pergunta
 from app.services.sintese.llm_service import (
     VERSAO_DO_PROMPT,
@@ -121,8 +121,7 @@ class GeradorDeSintese:
 
     async def executar(self, job: JobDeSintese) -> JobDeSintese:
         pedidos = self.planejar(job.parametros)
-        tamanho = job.parametros.tamanho_do_lote
-        lotes = [pedidos[i:i + tamanho] for i in range(0, len(pedidos), tamanho)]
+        lotes = dividir(pedidos, job.parametros.tamanho_do_lote)
         job.pedidos = len(pedidos)
         job.lotes = len(lotes)
         job.status = StatusDoJob.EXECUTANDO
@@ -131,56 +130,37 @@ class GeradorDeSintese:
 
         dedup = Deduplicador()
         dedup.adicionar_varias(self._banco_inicial, ORIGEM_BANCO_INICIAL)
-        semaforo = asyncio.Semaphore(job.parametros.concorrencia)
-        parar = asyncio.Event()
-        # Um lock serializa a pos-processagem: dedup e contadores sao estado
-        # compartilhado entre lotes concorrentes.
-        lock = asyncio.Lock()
 
-        async def processar_lote(lote: list[PedidoDeExemplo]) -> None:
-            if parar.is_set():
-                return
-            async with semaforo:
-                if parar.is_set():
-                    return
-                try:
-                    # Lotes reindexados 1..N: o professor ve indices locais.
-                    locais = [p.model_copy(update={"indice": i + 1}) for i, p in enumerate(lote)]
-                    gerados = await self._servico.gerar(locais)
-                except OrcamentoExcedido as exc:
-                    parar.set()
-                    async with lock:
-                        job.status = StatusDoJob.ORCAMENTO_EXCEDIDO
-                        job.erro = str(exc)
-                        self._salvar(job)
-                    return
-                except Exception:
-                    logger.exception("Sintese %s: lote falhou", job.id)
-                    async with lock:
-                        job.lotes_com_erro += 1
-                        self._salvar(job)
-                    return
-                async with lock:
-                    aceitos, descartados = self._processar(job, locais, gerados, dedup)
-                    self._repositorio.acrescentar_exemplos(job.id, aceitos)
-                    self._repositorio.acrescentar_descartados(job.id, descartados)
-                    job.lotes_concluidos += 1
-                    job.gerados += len(gerados)
-                    job.aceitos += len(aceitos)
-                    job.descartados += len(descartados)
-                    for d in descartados:
-                        job.descartes_por_motivo[d.motivo] = job.descartes_por_motivo.get(d.motivo, 0) + 1
-                    self._salvar(job)
+        async def chamar(lote: list[PedidoDeExemplo]) -> tuple[list[PedidoDeExemplo], list[ExemploGerado]]:
+            # Lotes reindexados 1..N: o professor ve indices locais.
+            locais = [p.model_copy(update={"indice": i + 1}) for i, p in enumerate(lote)]
+            return locais, await self._servico.gerar(locais)
 
+        def consolidar(_lote: list[PedidoDeExemplo], saida: tuple[list[PedidoDeExemplo], list[ExemploGerado]]) -> None:
+            locais, gerados = saida
+            aceitos, descartados = self._processar(job, locais, gerados, dedup)
+            self._repositorio.acrescentar_exemplos(job.id, aceitos)
+            self._repositorio.acrescentar_descartados(job.id, descartados)
+            job.gerados += len(gerados)
+            job.aceitos += len(aceitos)
+            job.descartados += len(descartados)
+            for d in descartados:
+                job.descartes_por_motivo[d.motivo] = job.descartes_por_motivo.get(d.motivo, 0) + 1
+
+        executor = ExecutorDeLotes(chamar=chamar, consolidar=consolidar, rotulo=f"Sintese {job.id}")
         with etapa_scope(Etapa.SINTESE), job_scope(job.id, job.parametros.teto_usd):
-            await asyncio.gather(*(processar_lote(lote) for lote in lotes))
+            resultado = await executor.executar(lotes, job.parametros.concorrencia)
 
-        if job.status != StatusDoJob.ORCAMENTO_EXCEDIDO:
-            if job.lotes and job.lotes_com_erro == job.lotes:
-                job.status = StatusDoJob.FALHOU
-                job.erro = "todos os lotes falharam; veja o log do processo"
-            else:
-                job.status = StatusDoJob.CONCLUIDO
+        job.lotes_concluidos = resultado.concluidos
+        job.lotes_com_erro = resultado.com_erro
+        if resultado.orcamento_excedido:
+            job.status = StatusDoJob.ORCAMENTO_EXCEDIDO
+            job.erro = resultado.orcamento_excedido
+        elif resultado.todos_falharam:
+            job.status = StatusDoJob.FALHOU
+            job.erro = "todos os lotes falharam; veja o log do processo"
+        else:
+            job.status = StatusDoJob.CONCLUIDO
         self._salvar(job)
         return job
 
@@ -198,22 +178,11 @@ class GeradorDeSintese:
         descartados: list[ExemploDescartado] = []
         for g in gerados:
             pedido = por_indice.get(g.indice)
-            if pedido is None:
-                descartados.append(ExemploDescartado(job_id=job.id, motivo=MOTIVO_INDICE_DESCONHECIDO, pergunta=g.pergunta, detalhe=f"indice={g.indice}"))
-                continue
-            marca = marca_de_injecao(f"{g.pergunta}\n{g.raciocinio}\n{g.resposta}")
-            if marca:
-                descartados.append(ExemploDescartado(job_id=job.id, motivo=MOTIVO_INJECAO, pergunta=g.pergunta, tipo=pedido.tipo, detalhe=marca))
-                continue
-            if len(g.pergunta.strip()) < PERGUNTA_MINIMA_CHARS:
-                descartados.append(ExemploDescartado(job_id=job.id, motivo=MOTIVO_PERGUNTA_CURTA, pergunta=g.pergunta, tipo=pedido.tipo))
-                continue
-            duplicata = dedup.verificar(g.pergunta)
-            if duplicata is not None:
-                motivo = MOTIVO_VAZAMENTO if duplicata.origem == ORIGEM_BANCO_INICIAL else MOTIVO_DUPLICATA
+            motivo = self._motivo_de_descarte(g, pedido, dedup)
+            if motivo is not None:
                 descartados.append(ExemploDescartado(
-                    job_id=job.id, motivo=motivo, pergunta=g.pergunta, tipo=pedido.tipo,
-                    detalhe=f"similaridade={duplicata.similaridade} com: {duplicata.referencia[:120]}",
+                    job_id=job.id, motivo=motivo[0], pergunta=g.pergunta,
+                    tipo=pedido.tipo if pedido else None, detalhe=motivo[1],
                 ))
                 continue
             dedup.adicionar(g.pergunta, ORIGEM_JOB)
@@ -227,6 +196,25 @@ class GeradorDeSintese:
                 versao_do_prompt=VERSAO_DO_PROMPT, criado_em=_agora(),
             ))
         return aceitos, descartados
+
+    @staticmethod
+    def _motivo_de_descarte(
+        g: ExemploGerado, pedido: PedidoDeExemplo | None, dedup: Deduplicador
+    ) -> tuple[str, str] | None:
+        """(motivo, detalhe) do descarte, ou None se o exemplo segue."""
+
+        if pedido is None:
+            return MOTIVO_INDICE_DESCONHECIDO, f"indice={g.indice}"
+        marca = marca_de_injecao(f"{g.pergunta}\n{g.raciocinio}\n{g.resposta}")
+        if marca:
+            return MOTIVO_INJECAO, marca
+        if len(g.pergunta.strip()) < PERGUNTA_MINIMA_CHARS:
+            return MOTIVO_PERGUNTA_CURTA, ""
+        duplicata = dedup.verificar(g.pergunta)
+        if duplicata is not None:
+            motivo = MOTIVO_VAZAMENTO if duplicata.origem == ORIGEM_BANCO_INICIAL else MOTIVO_DUPLICATA
+            return motivo, f"similaridade={duplicata.similaridade} com: {duplicata.referencia[:120]}"
+        return None
 
     def _normalizar_citacoes(self, citadas: list[str]) -> tuple[list[str], list[str]]:
         """Ids canonicos ou referencias livres -> (existem no corpus, nao existem)."""

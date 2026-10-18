@@ -6,9 +6,12 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core import llm
@@ -27,9 +30,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from app.services.jobs_interrompidos import marcar_jobs_interrompidos
+
     data_dir().mkdir(parents=True, exist_ok=True)
     for aviso in llm.avisos_de_configuracao():
         logger.warning("Configuracao de LLM: %s", aviso)
+    # Jobs rodam como tasks deste processo: o que estava aberto quando o
+    # processo anterior morreu nao vai terminar; o estado gravado nao pode
+    # dizer o contrario para quem faz polling.
+    marcar_jobs_interrompidos()
     yield
 
 
@@ -49,6 +58,17 @@ verificar_configuracao()
 app.add_middleware(RequestContextMiddleware)
 registrar_handlers(app)
 app.include_router(api_router, prefix="/api/v1")
+
+# Front minimo (HTML + JS puro, sem build) para a parte HUMANA do fluxo:
+# anotacao de calibracao, inspecao de exemplos/decisoes e painel de runs.
+# Os arquivos sao publicos; cada chamada que a pagina faz a API leva a chave
+# que a pessoa digitou, entao a protecao continua sendo a da API.
+app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "ui", html=True), name="ui")
+
+
+@app.get("/", include_in_schema=False)
+async def raiz() -> RedirectResponse:
+    return RedirectResponse(url="/ui/")
 
 
 @app.get("/health/live", tags=["health"])

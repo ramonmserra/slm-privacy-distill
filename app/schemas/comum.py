@@ -17,4 +17,5 @@ class Etapa(StrEnum):
     DATASET = "dataset"
     TREINO = "treino"
     AVALIACAO = "avaliacao"
+    ON_POLICY = "on_policy"
     DIAGNOSTICO = "diagnostico"
