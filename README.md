@@ -26,14 +26,13 @@ API gera dados sintéticos e cadeias de raciocínio sobre a LGPD; os dados são
 
 ## Estado atual
 
-O projeto é construído em etapas, cada uma validável sozinha
-(`docs/PLANO_DE_IMPLEMENTACAO.md`, §11):
+O projeto é construído em etapas, cada uma validável sozinha:
 
 | Etapa | Conteúdo | Estado |
 |---|---|---|
 | 0 — Fundação | API, autenticação, camada única de LLM (professor/juiz/aluno), telemetria de custo, orçamento por job, testes, CI | ✅ pronta |
-| 1 — Corpus + Síntese | LGPD chunkada por artigo, recuperação, geração sintética pelo professor | ⏳ próxima |
-| 2 — Filtro + Dataset | self-consistency, juiz de qualidade, citações, held-out, export JSONL | — |
+| 1 — Corpus + Síntese | LGPD chunkada por dispositivo com id canônico, BM25, parser de referências, geração sintética pelo professor com dedup e verificação de citações | ✅ pronta |
+| 2 — Filtro + Dataset | self-consistency, juiz de qualidade, held-out, export JSONL | ⏳ próxima |
 | 3 — Treino externo | receitas CPU local (0.6B) e Colab T4 (1.7B), registro de runs | — |
 | 4 — Avaliação | backtest com juiz cego, verificação determinística, comparação pareada | — |
 | 5 — On-policy + relatórios | rodada on-policy, tabelas e figuras do TCC | — |
@@ -57,6 +56,14 @@ Três papéis de modelo, cada um com provedor e modelo definidos no `.env`:
 
 Regra da pesquisa: professor e juiz de **famílias diferentes**. A API avisa
 em `GET /api/v1/usage/providers` quando coincidem.
+
+**Onde entra o RAG.** A síntese é *geração ancorada em recuperação*: a LGPD
+é quebrada em dispositivos com id canônico (`LGPD:art.7:inc.IX`) e indexada
+por BM25. Para cada exemplo pedido, o gerador recupera o artigo-alvo e os
+artigos relacionados e os entrega ao professor como contexto; o professor só
+pode citar ids que recebeu, e cada id citado é conferido no corpus por
+código, não por confiança. O mesmo índice servirá à condição de controle
+"aluno com RAG sem treino" e ao rastro de embasamento do juiz.
 
 ## Requisitos
 
@@ -146,6 +153,34 @@ Cada etapa tem uma validação própria. Para a **Etapa 0**:
    ponta. Depois, `GET /api/v1/usage/llm` mostra o consumo registrado por
    etapa (`diagnostico`) e por modelo.
 
+Para a **Etapa 1** (corpus e síntese):
+
+1. **Texto da LGPD** já está versionado em `recursos/fontes/lgpd.txt`. Para
+   rebaixar do Planalto (e conferir se a lei mudou):
+   ```powershell
+   python -m scripts.baixar_lgpd
+   ```
+2. **Ingerir e consultar o corpus** (não gasta nada):
+   ```powershell
+   curl -X POST -H "X-API-Key: SUA_CHAVE" -H "Content-Type: application/json" -d "{\"fonte\":\"LGPD\"}" http://localhost:8000/api/v1/corpus/ingerir
+   curl -H "X-API-Key: SUA_CHAVE" "http://localhost:8000/api/v1/corpus/dispositivos/LGPD:art.7:inc.IX"
+   curl -H "X-API-Key: SUA_CHAVE" "http://localhost:8000/api/v1/corpus/buscar?q=incidente%20de%20seguranca&k=3"
+   ```
+   Esperado: 79 artigos e cerca de 450 dispositivos; a busca por incidente
+   devolve o art. 48 em primeiro.
+3. **Um job pequeno de síntese** (custa centavos; o job respeita
+   `LLM_BUDGET_USD_POR_JOB`):
+   ```powershell
+   curl -X POST -H "X-API-Key: SUA_CHAVE" -H "Content-Type: application/json" -d "{\"quantidade\":10,\"tamanho_do_lote\":5}" http://localhost:8000/api/v1/sintese/jobs
+   curl -H "X-API-Key: SUA_CHAVE" http://localhost:8000/api/v1/sintese/jobs/ID_DO_JOB
+   curl -H "X-API-Key: SUA_CHAVE" http://localhost:8000/api/v1/sintese/jobs/ID_DO_JOB/exemplos
+   curl -H "X-API-Key: SUA_CHAVE" http://localhost:8000/api/v1/sintese/jobs/ID_DO_JOB/descartados
+   ```
+   O status traz contadores (gerados, aceitos, descartados por motivo) e o
+   custo. Leia os exemplos: `citacoes_validas=false` marca o que o professor
+   citou e não existe no corpus. A validação da etapa é o grupo inspecionar
+   um lote de ~200 exemplos antes de gerar em volume.
+
 ## Testes e qualidade
 
 ```powershell
@@ -165,15 +200,19 @@ pytest e auditoria de dependências.
 ```
 app/
   main.py              FastAPI, lifespan, health
-  api/v1/endpoints/    rotas HTTP (usage; corpus, sintese, filtro... nas próximas etapas)
+  api/v1/endpoints/    rotas HTTP: usage, corpus, sintese (filtro, datasets, avaliacao nas próximas etapas)
   core/                config, auth, llm (papéis e provedores), llm_pricing, llm_usage, llm_gate, observability, erros
+  services/corpus/     chunking por dispositivo, parser de referências, BM25, ingestão
+  services/sintese/    taxonomia, serviço do professor (Protocol + impl), dedup, engine de jobs
+  services/injecao.py  guardrail anti-injeção e verificação determinística da saída
   schemas/             contratos Pydantic
   repositories/        persistência em arquivo (escrita atômica)
-recursos/              insumos versionados: banco inicial de perguntas, fontes jurídicas
+recursos/              insumos versionados: banco inicial de perguntas, texto da LGPD
+scripts/               baixar_lgpd (baixa e limpa o texto consolidado do Planalto)
 treino/                receitas de treino (CPU local e Colab) — Etapa 3
 scripts/               utilitários de linha de comando
 tests/                 suíte automatizada
-docs/                  plano, arquitetura, histórico de decisões
+docs/                  arquitetura e fluxos
 data/                  saída de runtime (fora do git)
 ```
 
@@ -189,13 +228,14 @@ data/                  saída de runtime (fora do git)
 | 409 `orcamento_do_job_excedido` | Job atingiu `LLM_BUDGET_USD_POR_JOB` | Subir o teto ou reduzir o lote; o custo acumulado está em `/usage/llm` → `por_job` |
 | 503 `provedor_saturado` | Disjuntor aberto após 429/5xx seguidos | Aguardar `Retry-After`; conferir cota da conta do provedor |
 | Aviso "professor e juiz no MESMO provedor" | `JUDGE_PROVIDER` igual a `TEACHER_PROVIDER` | Apontar o juiz para outra família |
+| 409 "Corpus LGPD nao ingerido" | Nenhuma ingestão neste `DATA_DIR` | `POST /api/v1/corpus/ingerir` |
+| Job de síntese termina `falhou` com todos os lotes em erro | Credencial do professor ausente ou modelo recusado | Conferir `/health/ready` e o log do processo; `ping/teacher` isola o problema |
+| Muitos descartes `duplicata_no_job` | Lote pequeno sobre poucos artigos | Aumentar `quantidade` e variar `tipos`; o dedup é por similaridade de tokens |
 
 ## Documentação
 
 | Documento | Conteúdo |
 |---|---|
-| [`docs/PLANO_DE_IMPLEMENTACAO.md`](docs/PLANO_DE_IMPLEMENTACAO.md) | O plano: decisões, pipeline, desenho experimental, métricas, fases |
 | [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) | Como é construído: camadas, módulos, contratos, fluxos explicativos |
-| [`docs/HISTORICO_DECISOES.md`](docs/HISTORICO_DECISOES.md) | Decisões tomadas e revertidas, com data e medição |
-| [`docs/ai/`](docs/ai/) | Diretrizes de engenharia (arquitetura, código, segurança, testes, agentes) |
 | [`recursos/avaliacao/banco_inicial_lgpd.jsonl`](recursos/avaliacao/banco_inicial_lgpd.jsonl) | 34 perguntas de avaliação com artigos de referência e critérios esperados |
+| [`recursos/fontes/lgpd.txt`](recursos/fontes/lgpd.txt) | Texto consolidado da LGPD, limpo e versionado (fonte e data no cabeçalho) |

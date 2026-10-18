@@ -16,8 +16,8 @@ __pycache__/
 # Saida de runtime (datasets gerados, telemetria, artefatos de treino)
 data/
 
-# Documentos de trabalho locais ficam fora do git; os de referencia entram
+# Documentos de trabalho locais (plano, historico de decisoes, diretrizes do
+# assistente) ficam fora do git; so' a arquitetura e' publica
 docs/*
 !docs/ARQUITETURA.md
-!docs/HISTORICO_DECISOES.md
 CLAUDE.md

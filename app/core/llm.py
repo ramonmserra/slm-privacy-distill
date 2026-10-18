@@ -92,7 +92,8 @@ _MODEL_BY_PROVIDER_TIER: dict[str, dict[ModelTier, str]] = {
         ModelTier.JUDGE: "claude-sonnet-5",
         ModelTier.STUDENT: "claude-haiku-4-5",
     },
-    # Tags do Ollama. O aluno default e' o Qwen3-1.7B (decisao 2.3 do plano).
+    # Tags do Ollama. Aluno default: Qwen3-1.7B (segue instrucao, produz JSON,
+    # GGUF Q4 roda em CPU; o Manaca-1B so' existe em versao base).
     PROVIDER_LOCAL: {
         ModelTier.TEACHER: "qwen3:1.7b",
         ModelTier.JUDGE: "qwen3:1.7b",

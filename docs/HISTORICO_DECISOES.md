@@ -57,3 +57,22 @@ O portão compara custo real acumulado do job + estimativa de entrada
 `max_tokens` de saída por chamada (até 8.192 no professor) recusaria jobs
 legítimos cedo demais. O teto pode ser ultrapassado pela saída da última
 chamada, na ordem de centavos — erro para o lado barato.
+
+## 2026-10-18 — Fonte da LGPD: Planalto consolidado, com correção de "Art. 5 7."
+
+A página oficial traz "Art. 5 7. (VETADO)." (espaço dentro do número). O
+parser lia "artigo 5" e o id `LGPD:art.5` ficava duplicado, sobrescrevendo o
+art. 5 verdadeiro no dicionário por id. Duas defesas: `scripts/baixar_lgpd.py`
+normaliza o número partido ao limpar, e `Corpus.__init__` recusa ids
+duplicados (`CorpusInvalido`) em vez de sobrescrever em silêncio. Resultado
+após a correção: 79 artigos, 452 dispositivos, sem duplicatas; todas as
+referências do banco inicial resolvem.
+
+## 2026-10-18 — Dedup por Jaccard de tokens (limiar 0,7)
+
+Medida barata e determinística, aplicada contra o próprio job e contra o
+banco inicial de avaliação (vazamento). Observado nos testes: perguntas
+templadas que diferem só pelo número do artigo são tratadas como
+duplicatas, o que é o comportamento desejado. Paráfrase profunda escapa;
+se a medição mostrar que escapa demais, entra similaridade por embedding na
+Etapa 2.

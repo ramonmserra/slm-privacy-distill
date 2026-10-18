@@ -6,9 +6,7 @@ verdade: o código em `app/`. Revisado contra a árvore de trabalho em
 etapas seguintes acrescentam, no formato em que vão nascer; o que já existe
 não leva marca.
 
-Documentos irmãos: [`PLANO_DE_IMPLEMENTACAO.md`](PLANO_DE_IMPLEMENTACAO.md)
-(por que e em que ordem), [`HISTORICO_DECISOES.md`](HISTORICO_DECISOES.md)
-(decisões com data e medição) e [`../README.md`](../README.md) (como rodar).
+Documento irmão: [`../README.md`](../README.md) (como rodar).
 
 ---
 
@@ -154,7 +152,7 @@ conteúdo).
 `app/repositories/_file_store.py`: `escrever_json_atomico` (tmp +
 `os.replace` com retry para o lock transitório do Windows), `ler_json`,
 `acrescentar_jsonl`, `ler_jsonl`. Uma instância do processo; se isso mudar,
-SQLite (ver `HISTORICO_DECISOES.md`).
+SQLite.
 
 ### 2.5 Endpoints existentes
 
@@ -165,10 +163,47 @@ SQLite (ver `HISTORICO_DECISOES.md`).
 | `GET /api/v1/usage/llm` | Agregado por etapa/modelo/job, total, `modelos_sem_preco`, `modelos_com_preco_nao_conferido` |
 | `GET /api/v1/usage/providers` | Provedor, modelo, origem (`env`/`default`), variável a mexer e credencial de cada papel; `avisos` |
 | `POST /api/v1/usage/ping/{papel}` | **Uma** chamada estruturada real ao modelo do papel; devolve latência e custo estimado |
+| `POST /api/v1/corpus/ingerir` | Lê `recursos/fontes/<fonte>.txt`, chunka por dispositivo, persiste em `DATA_DIR/corpus/`; idempotente |
+| `GET /api/v1/corpus` | Resumo do corpus ativo (artigos, parágrafos, incisos, alíneas) |
+| `GET /api/v1/corpus/dispositivos/{id}` | Um dispositivo e o artigo inteiro remontado |
+| `GET /api/v1/corpus/buscar?q=&k=` | Recuperação BM25 sobre artigos |
+| `POST /api/v1/sintese/jobs` | Cria um job de síntese e o executa em segundo plano (202) |
+| `GET /api/v1/sintese/jobs[/{id}]` | Lista ou acompanha: status, contadores, descartes por motivo, custo |
+| `GET /api/v1/sintese/jobs/{id}/exemplos` · `/descartados` | Inspeção humana do que o professor produziu |
 
 ---
 
-## 3. Serviços de domínio (planejado)
+## 3. Serviços de domínio
+
+### 3.1 Corpus (`app/services/corpus/`)
+
+| Módulo | Responsabilidade |
+|---|---|
+| `chunking.py` | Texto limpo da lei → `Dispositivo` com id canônico (`LGPD:art.7:inc.IX`, `LGPD:art.48:par.1`, `LGPD:art.11:inc.II:ali.c`, `LGPD:art.55-A`), hierarquia artigo > parágrafo > inciso > alínea, capítulo e seção. Linha sem marcador é continuação; nada é inventado |
+| `referencias.py` | Referência em texto livre ("arts. 7º, IV; 11, II, “c”; 13 e 16") → ids, por varredura sequencial de tokens; `artigos_mencionados` extrai artigos de uma resposta em prosa |
+| `retrieval.py` | BM25 próprio (~60 linhas) sobre artigos remontados; tokenização sem acento e sem stopwords; ranking determinístico |
+| `ingestao.py` | `Corpus` em memória (índice por id, `texto_do_artigo`, `buscar`, `relacionados`), `ingerir` e o registro por processo |
+| `scripts/baixar_lgpd.py` | Baixa o HTML consolidado do Planalto, descarta redação revogada (`<strike>`, `line-through`) e anotações editoriais, grava `recursos/fontes/lgpd.txt` versionado |
+
+Resultado medido em 2026-10-18: 79 artigos, 452 dispositivos; todas as
+referências do banco inicial de perguntas resolvem para ids existentes.
+
+### 3.2 Síntese (`app/services/sintese/`) — o RAG da pesquisa
+
+| Módulo | Responsabilidade |
+|---|---|
+| `taxonomia.py` | Oito tipos de tarefa com objetivo e instrução ao professor; `sem_resposta` ensina abstenção |
+| `llm_service.py` | `SinteseLLMService` (Protocol) + `LlmSinteseService` (papel `TEACHER`, um lote de N pedidos por chamada); `VERSAO_DO_PROMPT` = hash do system prompt |
+| `dedup.py` | Jaccard sobre tokens normalizados contra o próprio job e contra o **banco inicial** (vazamento) |
+| `gerador.py` | Engine: plano com seed, contexto RAG (alvo + relacionados por BM25), lotes concorrentes sob `job_scope`/`etapa_scope`, pós-processamento determinístico, persistência |
+| `app/services/injecao.py` | `GUARDRAIL` no prompt e `marca_de_injecao` na saída |
+
+O que o professor decide: pergunta, raciocínio e resposta. O que o código
+decide: quais artigos ele vê, se as citações existem (`citacoes_validas`),
+se o exemplo é duplicata ou vaza a prova, se há marca de injeção, e o
+destino (aceito ou descartado com motivo). Nada é apagado.
+
+### 3.3 Etapas seguintes (planejado)
 
 Cada etapa do pipeline vira um pacote em `app/services/<etapa>/` com a
 mesma forma:
@@ -189,8 +224,6 @@ por chamada) e concorrência por cima do serviço; testes usam um dublê do
 
 | Pacote | Entrada → saída | Verificação determinística |
 |---|---|---|
-| `corpus` | LGPD e normas → artigos chunkados com id canônico (`LGPD:art.7:inc.I`) + índice BM25 | Guardrail anti-injeção: fonte é dado, não instrução |
-| `sintese` | artigo × tipo de tarefa → `pergunta`, `raciocinio`, `resposta`, `artigos_citados` | Dedup (hash + similaridade) contra o próprio dataset **e** contra o banco inicial |
 | `filtro` | exemplo → `aprovado`, `score_incerteza`, `motivos` | Citações existem; self-consistency (k amostras); juiz de qualidade |
 | `datasets` | exemplos aprovados → versão com held-out por hash estratificado; export JSONL de chat | Held-out nunca no export; teste garante |
 | `treino` | registro de runs externos (dataset, base, receita, hardware, artefato) | — |
@@ -198,17 +231,19 @@ por chamada) e concorrência por cima do serviço; testes usam um dublê do
 
 ---
 
-## 4. Dicionário de dados (planejado)
+## 4. Dicionário de dados
 
-| Artefato | Onde | Chave |
-|---|---|---|
-| Artigo do corpus | `data/corpus/<fonte>.jsonl` | `id` canônico |
-| Exemplo sintético | `data/sintese/<job_id>.jsonl` | `id` = hash(pergunta normalizada) |
-| Decisão do filtro | `data/filtro/<job_id>.jsonl` | `exemplo_id` |
-| Versão de dataset | `data/datasets/<versao>/{treino,held_out}.jsonl` + `manifesto.json` | `versao` = hash(conteúdo + filtro + split) |
-| Run de treino | `data/treinos/<run_id>.json` | `run_id` |
-| Run de avaliação | `data/avaliacao/<run_id>/{respostas,vereditos}.jsonl` + `resumo.json` | `run_id`, grava `VERSAO_DA_MEDIDA` e `modelo` |
-| Telemetria | `data/llm_usage.json` | etapa × modelo; job |
+| Artefato | Onde | Chave | Estado |
+|---|---|---|---|
+| Dispositivo do corpus | `data/corpus/<fonte>.jsonl` (+ `manifesto.json`) | `id` canônico | existe |
+| Job de síntese | `data/sintese/jobs/<job_id>.json` | `id` | existe |
+| Exemplo sintético aceito | `data/sintese/<job_id>/exemplos.jsonl` | `id` = hash(tokens da pergunta); grava `versao_do_prompt`, `modelo`, `contexto_ids`, `citacoes_validas` | existe |
+| Exemplo descartado | `data/sintese/<job_id>/descartados.jsonl` | `motivo` ∈ {indice_desconhecido, marca_de_injecao, pergunta_curta, duplicata_no_job, vazamento_do_banco_inicial} | existe |
+| Decisão do filtro | `data/filtro/<job_id>.jsonl` | `exemplo_id` | planejado |
+| Versão de dataset | `data/datasets/<versao>/{treino,held_out}.jsonl` + `manifesto.json` | `versao` = hash(conteúdo + filtro + split) | planejado |
+| Run de treino | `data/treinos/<run_id>.json` | `run_id` | planejado |
+| Run de avaliação | `data/avaliacao/<run_id>/{respostas,vereditos}.jsonl` + `resumo.json` | `run_id`, grava `VERSAO_DA_MEDIDA` e `modelo` | planejado |
+| Telemetria | `data/llm_usage.json` | etapa × modelo; job | existe |
 
 ---
 
@@ -293,7 +328,37 @@ flowchart TD
     CMP -- bateu --> OK2["Principal(nome da chave)"]
 ```
 
-### 6.4 Pipeline da pesquisa ponta a ponta (planejado)
+### 6.4 Síntese ancorada em recuperação (RAG): um job de ponta a ponta
+
+```mermaid
+sequenceDiagram
+    participant O as Operador
+    participant E as sintese.gerador
+    participant C as Corpus (BM25)
+    participant P as Professor (OpenAI)
+    participant R as SinteseRepository
+
+    O->>E: POST /sintese/jobs {quantidade, tipos, seed, lote}
+    E->>E: planejar: sorteia artigos (seed), cicla tipos e dificuldades
+    loop por pedido
+        E->>C: texto_do_artigo(alvo) + relacionados(alvo, k=2)
+        C-->>E: contexto com ids canônicos
+    end
+    loop por lote (concorrência limitada, job_scope com teto)
+        E->>P: system (regras + taxonomia + guardrail) + N pedidos com contexto
+        P-->>E: N exemplos {indice, pergunta, raciocinio, resposta, artigos_citados}
+        E->>E: marca_de_injecao? pergunta curta? duplicata? vazamento do banco inicial?
+        E->>C: cada id citado existe?
+        E->>R: exemplos.jsonl (aceitos, com citacoes_validas) e descartados.jsonl (motivo)
+        E->>R: job.json (contadores, custo acumulado)
+    end
+    alt OrcamentoExcedido
+        E->>R: status=orcamento_excedido; o que já saiu fica
+    end
+    O->>E: GET /sintese/jobs/{id}/exemplos — inspeção humana
+```
+
+### 6.5 Pipeline da pesquisa ponta a ponta (planejado)
 
 ```mermaid
 flowchart LR
@@ -310,7 +375,7 @@ flowchart LR
     AV --> RE["RELATÓRIOS<br/>tabelas com IC · pareado · custo"]
 ```
 
-### 6.5 Avaliação de um modelo (planejado)
+### 6.6 Avaliação de um modelo (planejado)
 
 ```mermaid
 sequenceDiagram
