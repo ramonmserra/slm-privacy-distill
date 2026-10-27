@@ -38,6 +38,13 @@ class TestAutenticacao:
         assert client.get("/api/v1/usage/llm", headers={"X-API-Key": "segredo"}).status_code == 200
         assert client.get("/api/v1/usage/llm", headers={"X-API-Key": "outra"}).status_code == 200
 
+    def test_openapi_declara_api_key_para_o_swagger(self, client):
+        esquema = client.get("/openapi.json").json()
+        seguranca = esquema["components"]["securitySchemes"]
+        assert {"type": "apiKey", "in": "header", "name": "X-API-Key"}.items() <= next(iter(seguranca.values())).items()
+        assert esquema["paths"]["/api/v1/usage/llm"]["get"]["security"]
+        assert "security" not in esquema["paths"]["/health/live"]["get"]
+
     def test_health_nao_exige_credencial(self, client, monkeypatch):
         monkeypatch.setenv("AUTH_MODE", "api_key")
         assert client.get("/health/live").status_code == 200

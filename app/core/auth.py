@@ -24,7 +24,8 @@ import logging
 import os
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Security
+from fastapi.security import APIKeyHeader
 
 from app.core.config import APP_ENV_TEST, app_env
 
@@ -37,6 +38,10 @@ MODE_INVALID = "invalid"
 _MODOS = (MODE_DISABLED, MODE_API_KEY)
 
 HEADER_API_KEY = "X-API-Key"
+
+# Declarar o header como esquema de seguranca faz o Swagger (/docs) mostrar o
+# botao Authorize. `auto_error=False`: a decisao 401/503 continua aqui embaixo.
+_esquema_api_key = APIKeyHeader(name=HEADER_API_KEY, auto_error=False)
 
 
 @dataclass(frozen=True)
@@ -97,7 +102,7 @@ def verificar_configuracao() -> None:
         logger.error("AUTH_MODE=api_key sem nenhuma chave em AUTH_API_KEYS: nenhuma credencial sera aceita.")
 
 
-def autenticar(request: Request) -> Principal:
+def autenticar(apresentada: str | None = Security(_esquema_api_key)) -> Principal:
     """Dependencia do FastAPI: 503 se o servidor esta mal configurado, 401 se
     a credencial falta ou e' invalida."""
 
@@ -110,7 +115,7 @@ def autenticar(request: Request) -> Principal:
     if modo == MODE_DISABLED:
         return Principal(subject="anonimo-teste")
 
-    apresentada = request.headers.get(HEADER_API_KEY, "").strip()
+    apresentada = (apresentada or "").strip()
     if not apresentada:
         raise HTTPException(status_code=401, detail=f"Header {HEADER_API_KEY} ausente.")
     # Comparacao em tempo constante contra TODAS as chaves: um `in dict` vazaria
