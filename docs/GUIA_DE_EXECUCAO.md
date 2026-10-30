@@ -31,6 +31,51 @@ clique **Entrar**. A chave fica só na sessão da aba. Três telas:
 | **Inspeção** | ler o conteúdo que cada job produziu, com paginação | select **Fonte** (síntese exemplos/descartados, filtro aprovados/reprovados, on-policy amostras/reprovadas, avaliação erros/todos), select **Job / run**, **Por página**, setas |
 | **Anotação** | calibração humana do juiz | select **Run**, campo **Anotador**, caixa "pular itens que já anotei", caixa "mostrar veredito do juiz" (deixe desmarcada), **Carregar itens**, **Salvar e próximo**, **Recalcular** kappa |
 
+## Como baixar os dados de cada etapa
+
+Tudo o que um passo produz pode ser baixado de três jeitos. Cada passo
+abaixo tem um bloco **Download** dizendo qual usar.
+
+1. **Botão Download do Swagger.** Toda resposta JSON no Swagger tem um
+   botão **Download** logo abaixo do **Response body**. Serve para guardar o
+   manifesto, o job, o run ou uma página de itens como `.json`.
+2. **Rotas de arquivo.** Datasets e on-policy têm rotas que devolvem o
+   JSONL inteiro; o Swagger mostra um link **Download file**. Para as rotas
+   paginadas (exemplos, decisões, itens), o limite é 500 por página; use
+   `offset` para as páginas seguintes, ou a função abaixo.
+3. **Arquivos em disco.** A API grava tudo em `DATA_DIR` (default `data/`
+   na raiz do projeto). É a cópia completa e serve para backup e para os
+   gráficos do grupo:
+
+   | Etapa | Arquivo em `DATA_DIR` |
+   |---|---|
+   | Corpus | `corpus/lgpd.jsonl` e `corpus/lgpd.manifesto.json` |
+   | Síntese | `sintese/jobs/<id>.json`, `sintese/<id>/exemplos.jsonl`, `sintese/<id>/descartados.jsonl` |
+   | Filtro | `filtro/jobs/<id>.json`, `filtro/<id>/decisoes.jsonl` |
+   | Dataset | `datasets/<versao>/manifesto.json`, `treino.jsonl`, `held_out.jsonl` |
+   | Treino | `treinos/<id>.json` (o `run.json` registrado) |
+   | Avaliação | `avaliacao/runs/<id>.json`, `avaliacao/<id>/itens.jsonl`, `avaliacao/<id>/anotacoes.jsonl` |
+   | On-policy | `on_policy/jobs/<id>.json`, `on_policy/<id>/amostras.jsonl`, `sft.jsonl`, `dpo.jsonl` |
+   | Custo | `llm_usage.json` |
+
+Para baixar pelo terminal, defina uma vez por sessão:
+
+```powershell
+$B = "http://localhost:8000/api/v1"
+$H = @{ "X-API-Key" = "SUA_CHAVE" }
+# rota de arquivo (JSONL inteiro)
+function Baixar($rota, $destino) { Invoke-WebRequest -Headers $H -OutFile $destino "$B/$rota" }
+# rota paginada: percorre as paginas de 500 e grava um JSON com tudo
+function BaixarPaginado($rota, $destino) {
+  $sep = if ($rota.Contains("?")) { "&" } else { "?" }
+  $tudo = @(); $offset = 0
+  do { $pag = @(Invoke-RestMethod -Headers $H "$B/$rota${sep}limite=500&offset=$offset"); $tudo += $pag; $offset += 500 } while ($pag.Count -eq 500)
+  $tudo | ConvertTo-Json -Depth 20 | Out-File $destino -Encoding utf8
+}
+```
+
+A função aceita rotas com filtro (por exemplo `decisoes?aprovado=false`).
+
 Convenção: **ID** entre colchetes (por exemplo `[ID_SINTESE_1]`) é um valor
 copiado da resposta de um passo anterior. Anote todos: são reutilizados.
 
@@ -208,6 +253,12 @@ síntese e a condição C6 usam; se ele errar aqui, erra lá.
 
 **No front:** não há tela de corpus. Tudo pelo Swagger.
 
+**Download:** o texto-fonte já está no repositório em
+`recursos/fontes/lgpd.txt`. O corpus chunkado fica em
+`data/corpus/lgpd.jsonl` (um dispositivo por linha, com id canônico) e o
+resumo em `data/corpus/lgpd.manifesto.json`. Não há rota de arquivo;
+`GET /api/v1/corpus` devolve o resumo para o botão **Download** do Swagger.
+
 ---
 
 ## Passo 5 — Piloto de síntese (~0,5 USD)
@@ -254,6 +305,18 @@ do Swagger.
 | Cobertura de tipos e dificuldades | cabeçalho dos cartões | os 8 tipos aparecem; não é só `conceito` básico |
 | Descartes fazem sentido | Fonte **Síntese — descartados** | duplicatas são mesmo duplicatas; vazamento do banco inicial foi pego |
 
+**Download:** para o grupo ler fora do painel (planilha, impressão), use
+o botão **Download** do Swagger em `GET /api/v1/sintese/jobs/{job_id}/exemplos`
+com `limite = 500`, ou pelo terminal:
+
+```powershell
+BaixarPaginado "sintese/jobs/[ID_PILOTO]/exemplos" piloto-exemplos.json
+Invoke-RestMethod -Headers $H "$B/sintese/jobs/[ID_PILOTO]/descartados" | ConvertTo-Json -Depth 10 | Out-File piloto-descartados.json -Encoding utf8
+```
+
+Os mesmos dados estão em `data/sintese/[ID_PILOTO]/exemplos.jsonl` e
+`descartados.jsonl`; o job em `data/sintese/jobs/[ID_PILOTO].json`.
+
 **Critério para avançar:** o grupo aprovou a amostra e registrou a
 `versao_do_prompt` que leu (está no job e em cada exemplo). Se reprovou,
 ajuste o prompt em `app/services/sintese/llm_service.py` (a versão muda
@@ -299,6 +362,12 @@ definiu.
 - Leitura rápida (10 exemplos por job) na tela **Inspeção**, só para
   confirmar que a qualidade é a mesma do piloto. A `versao_do_prompt` deve
   ser a que o grupo aprovou.
+
+**Download:** igual ao passo 5, trocando o id:
+`BaixarPaginado "sintese/jobs/[ID_SINTESE_1]/exemplos" sintese1.json`.
+Em disco: `data/sintese/[ID_SINTESE_1]/exemplos.jsonl`. Guarde também o
+job (`GET /api/v1/sintese/jobs/{job_id}` → **Download**): ele tem a
+`versao_do_prompt`, o `modelo` e o `custo_usd` que vão para o TCC.
 
 **Não reinicie a API** com job `executando`: o job morre com o processo e
 é marcado `falhou`. O que já foi gravado permanece e pode entrar no filtro.
@@ -355,6 +424,19 @@ veredito completo (`correcao_juridica`, `lastro_nas_citacoes`,
 | O filtro deixou passar algo ruim? | 10 aprovados | nenhuma afirmação sem lastro; `nota` 4 ou 5 |
 | Taxa de aprovação | `aprovados / avaliados` no job | 50% a 85%; fora disso, calibração errada |
 | Reprovação por tipo | `reprovacoes_por_motivo` e tipos nos cartões | `sem_resposta` não pode ter sido reprovado em massa por `abstencao_inadequada` |
+
+**Download:** as decisões completas (veredito do juiz, reamostragens,
+motivos) saem de `GET /api/v1/filtro/jobs/{job_id}/decisoes`. Pelo Swagger,
+`aprovado = false` e `limite = 500` e o botão **Download**; pelo terminal:
+
+```powershell
+BaixarPaginado "filtro/jobs/[ID_FILTRO]/decisoes?aprovado=false" reprovadas.json
+BaixarPaginado "filtro/jobs/[ID_FILTRO]/decisoes" decisoes.json
+```
+
+Em disco: `data/filtro/[ID_FILTRO]/decisoes.jsonl` tem todas as decisões
+numa linha por exemplo, e `data/filtro/jobs/[ID_FILTRO].json` o resumo
+com `reprovacoes_por_motivo` e `versao_do_filtro`.
 
 Se quase tudo reprovar por `incerteza_alta`, leia as reamostragens antes
 de subir o `limiar_de_incerteza`. Se o juiz estiver errado com frequência,
@@ -416,6 +498,11 @@ Dois datasets: o filtrado (C3) e o sem filtro (C2, controle).
 | `versoes_do_filtro` | uma versão só |
 
 **No front:** não há tela de datasets. O manifesto fica no Swagger.
+
+**Download:** o item 4 acima já é o download dos splits. Guarde também o
+manifesto (`GET /api/v1/datasets/{versao}` → **Download**): é o documento
+que identifica o dataset no TCC. Em disco, tudo fica em
+`data/datasets/[VERSAO]/` (`manifesto.json`, `treino.jsonl`, `held_out.jsonl`).
 
 **Regra:** o `held_out` nunca entra em treino nem no on-policy. O split é
 por hash do id; não copie linhas entre os arquivos.
@@ -520,6 +607,12 @@ o treino.
 **No front:** nada específico de treinos. Os runs aparecem como opções de
 modelo quando você cria avaliações.
 
+**Download:** o run registrado sai de `GET /api/v1/treinos/{run_id}`
+(**Download**) ou de `GET /api/v1/treinos` para todos de uma vez. Em
+disco: `data/treinos/[ID_RUN].json`. O GGUF, o Modelfile e o `run.json`
+originais ficam na pasta de cada condição que você baixou do Colab; a API
+não os guarda.
+
 ---
 
 ## Passo 11 — Avaliar cada condição (5 a 30 USD)
@@ -605,6 +698,20 @@ noite e não reinicie a API.
 | Os erros do juiz são justos? | 10 itens com erro na Inspeção | o grupo concorda com a `justificativa` em pelo menos 8; se não, vá ao passo 13 antes de tirar conclusões |
 | Latência e custo | `latencia_p50_ms`, `custo_usd_por_item` | entram na tabela do TCC como custo do cenário on-premise |
 
+**Download:** por run, dois arquivos. O resumo com as métricas sai de
+`GET /api/v1/avaliacao/runs/{run_id}` (**Download**); os itens, com
+resposta do modelo e veredito do juiz, de
+`GET /api/v1/avaliacao/runs/{run_id}/itens` com `limite = 500`:
+
+```powershell
+Invoke-RestMethod -Headers $H "$B/avaliacao/runs/[AV_C3]" | ConvertTo-Json -Depth 10 | Out-File av_c3.json -Encoding utf8
+BaixarPaginado "avaliacao/runs/[AV_C3]/itens" av_c3_itens.json
+```
+
+Em disco: `data/avaliacao/runs/[AV_C3].json` e
+`data/avaliacao/[AV_C3]/itens.jsonl`. Baixe os itens de **todos** os runs:
+são a matéria-prima das figuras por tipo e da análise de erros.
+
 Todos os runs do mesmo conjunto devem ter a mesma `versao_da_medida`. Se
 você alterar o prompt do juiz no meio, os runs antigos ficam incomparáveis
 e precisam ser refeitos.
@@ -682,6 +789,12 @@ Use a mesma definição da rubrica do juiz: "correto" é chegar à conclusão
 jurídica da referência; "grounded" é toda afirmação normativa ter lastro
 nos dispositivos de referência.
 
+**Download:** as anotações dos três autores saem de
+`GET /api/v1/avaliacao/runs/{run_id}/anotacoes` (sem filtro de
+`anotador`, vem tudo) e o resumo dos kappas de `.../calibracao`, ambos
+pelo botão **Download**. Em disco: `data/avaliacao/[HO_C3]/anotacoes.jsonl`.
+Esse arquivo é a evidência da calibração; anexe ao TCC.
+
 ---
 
 ## Passo 14 — On-policy, condição C4 (10 a 20 USD)
@@ -714,6 +827,16 @@ seleciona. Pré-requisito: C3 servido no Ollama (passo 10).
 
 3. Download: `GET /api/v1/on-policy/jobs/{job_id}/arquivo/{nome}` com
    `nome = sft` e depois `nome = dpo`. Salve como `sft.jsonl` e `dpo.jsonl`.
+   Um terceiro valor, `nome = amostras`, baixa todas as amostras com o
+   veredito do juiz, para análise. Pelo terminal:
+
+   ```powershell
+   Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/sft" sft.jsonl
+   Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/dpo" dpo.jsonl
+   Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/amostras" amostras.jsonl
+   ```
+
+   Em disco: `data/on_policy/[ID_ONPOLICY]/` com os mesmos três arquivos.
 
 4. No Colab (mesmo notebook, GPU T4), uma das receitas ou as duas como
    condições separadas:
@@ -772,6 +895,22 @@ número de custo do TCC.
 
    **Esperado:** `por_etapa` com tokens e custo de `sintese`, `filtro`,
    `avaliacao`, `on_policy` e `diagnostico`, e o `total`.
+
+**Download:** o `.md` sai direto do Swagger (botão **Download** no
+Response body, que é texto). Para guardar tudo de uma vez pelo terminal:
+
+```powershell
+$runs = "[AV_C0],[AV_C1],[AV_C6],[AV_C2],[AV_C3],[AV_C4]"
+$rotulos = "[AV_C0]:C0 professor,[AV_C1]:C1 Qwen base,[AV_C6]:C6 Qwen+RAG,[AV_C2]:C2 SFT sem filtro,[AV_C3]:C3 SFT filtrado,[AV_C4]:C4 on-policy"
+Invoke-RestMethod -Headers $H "$B/relatorios/condicoes.md?runs=$runs&rotulos=$rotulos" | Out-File tabela_banco_inicial.md -Encoding utf8
+Invoke-RestMethod -Headers $H "$B/relatorios/condicoes?runs=$runs&rotulos=$rotulos" | ConvertTo-Json -Depth 10 | Out-File tabela_banco_inicial.json -Encoding utf8
+Invoke-RestMethod -Headers $H "$B/relatorios/pareadas?referencia=[AV_C0]&candidatos=[AV_C1],[AV_C3],[AV_C4]" | ConvertTo-Json -Depth 10 | Out-File pareadas.json -Encoding utf8
+Invoke-RestMethod -Headers $H "$B/relatorios/custos" | ConvertTo-Json -Depth 10 | Out-File custos.json -Encoding utf8
+```
+
+A telemetria bruta de custo, por chamada agregada em etapa e modelo, está
+em `data/llm_usage.json`. Ao final da pesquisa, copie a pasta `data/`
+inteira para o armazenamento do grupo: é o conjunto completo de evidências.
 
 **O que avaliar antes de colar no TCC:**
 
