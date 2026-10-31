@@ -5,13 +5,18 @@ O que e' DETERMINISTICO aqui (e por isso mora no engine, nao no prompt):
 
 - o PLANO: artigos sorteados com seed fixa, tipos e dificuldades em ciclo --
   mesma seed, mesmo plano, mesma cobertura;
-- o CONTEXTO (RAG): artigo-alvo + artigos relacionados por BM25;
+- o CONTEXTO (RAG): artigo-alvo + artigos-ancora do tipo de tarefa (ver
+  `taxonomia`: as definicoes para classificar dado, as hipoteses legais
+  para base legal...) + artigos relacionados por BM25;
 - o CENARIO de inspiracao (guias da ANPD): sorteado por tipo com seed
   derivada da seed do job; ambienta a pergunta e nunca vira citacao;
 - a VERIFICACAO de citacoes: todo id citado e' normalizado e conferido no
   corpus; `citacoes_validas` e' calculado, nunca declarado pelo modelo;
+  citar artigo que nao estava no contexto entregue descarta o exemplo (o
+  juiz so' ve o contexto, entao nao poderia conferir);
 - a DEDUPLICACAO e a protecao contra vazamento do banco inicial;
-- a varredura anti-injecao da saida.
+- a varredura anti-injecao da saida e o descarte de texto que fala 'do
+  trecho fornecido' -- o aluno respondera' sem contexto nenhum.
 
 O professor so' escreve pergunta, raciocinio e resposta. Tudo o que decide
 o destino de um exemplo e' codigo. O laco de lotes (concorrencia, orcamento,
@@ -23,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import random
+import re
 import uuid
 
 from app.core.llm_usage import etapa_scope, job_scope, tracker
@@ -38,11 +44,12 @@ from app.schemas.sintese import (
     TipoDeTarefa,
 )
 from app.services.corpus.ingestao import Corpus
-from app.services.corpus.referencias import normalizar_referencias
+from app.services.corpus.referencias import artigo_de, normalizar_referencias
 from app.services.injecao import marca_de_injecao
 from app.services.lotes import ExecutorDeLotes, dividir
 from app.services.sintese.cenarios import Cenario, SorteioDeCenarios, carregar_cenarios
 from app.services.sintese.dedup import Deduplicador, carregar_banco_inicial, hash_da_pergunta
+from app.services.sintese.taxonomia import TAXONOMIA
 from app.services.sintese.llm_service import (
     VERSAO_DO_PROMPT,
     ExemploGerado,
@@ -61,8 +68,22 @@ MOTIVO_INJECAO = "marca_de_injecao"
 MOTIVO_PERGUNTA_CURTA = "pergunta_curta"
 MOTIVO_DUPLICATA = "duplicata_no_job"
 MOTIVO_VAZAMENTO = "vazamento_do_banco_inicial"
+MOTIVO_CITACAO_FORA_DO_CONTEXTO = "citacao_fora_do_contexto"
+MOTIVO_REFERENCIA_AO_CONTEXTO = "referencia_ao_contexto"
 ORIGEM_BANCO_INICIAL = "banco_inicial"
 ORIGEM_JOB = "job"
+
+# Frases que so' fazem sentido para quem viu o prompt. O exemplo vai treinar
+# um modelo que respondera' SEM contexto; 'o trecho fornecido nao contem'
+# vira, no aluno, uma desculpa sem referente. Deliberadamente NAO pega 'no
+# contexto de uma relacao de consumo', que e' portugues normal.
+_RE_REFERENCIA_AO_CONTEXTO = re.compile(
+    r"\b(?:trechos?|textos?|dispositivos?|artigos?|normas?)\s+(?:fornecid\w*|apresentad\w*|dispon[ií]ve\w*|acima)"
+    r"|\bcontexto\s+(?:fornecido|apresentado|dado|acima)"
+    r"|\bcom base (?:apenas|somente|exclusivamente) n[oa]s?\s+(?:trechos?|textos?|dispositivos?)"
+    r"|\bapenas com (?:esses|estes|os)\s+(?:trechos?|textos?|dispositivos?)",
+    re.IGNORECASE,
+)
 
 
 def _agora() -> dt.datetime:
@@ -115,16 +136,28 @@ class GeradorDeSintese:
                 rng.shuffle(fila)
             alvo = fila.pop()
             tipo = tipos[i % len(tipos)]
-            contexto = [TrechoDeContexto(id=alvo.id, texto=self._corpus.texto_do_artigo(alvo.id))]
-            for rel in self._corpus.relacionados(alvo.id, k=RELACIONADOS_POR_PEDIDO):
-                contexto.append(TrechoDeContexto(id=rel.id, texto=self._corpus.texto_do_artigo(rel.id)))
             pedidos.append(
                 PedidoDeExemplo(
                     indice=i + 1, tipo=tipo, dificuldade=dificuldades[i % len(dificuldades)],
-                    alvo_id=alvo.id, contexto=contexto, cenario=sorteio.proximo(tipo) if sorteio else None,
+                    alvo_id=alvo.id, contexto=self._contexto(alvo.id, tipo),
+                    cenario=sorteio.proximo(tipo) if sorteio else None,
                 )
             )
         return pedidos
+
+    def _contexto(self, alvo_id: str, tipo: TipoDeTarefa) -> list[TrechoDeContexto]:
+        """Alvo primeiro, depois as ancoras do tipo (se existem no corpus),
+        depois os relacionados por BM25; sem repetir dispositivo. A ancora
+        vem antes do relacionado porque e' ela que a tarefa exige; o
+        relacionado e' o que o indice achou parecido."""
+
+        ids = [alvo_id]
+        candidatos = [a for a in TAXONOMIA[tipo].ancoras if self._corpus.existe(a)]
+        candidatos += [r.id for r in self._corpus.relacionados(alvo_id, k=RELACIONADOS_POR_PEDIDO)]
+        for id_ in candidatos:
+            if id_ not in ids:
+                ids.append(id_)
+        return [TrechoDeContexto(id=i, texto=self._corpus.texto_do_artigo(i)) for i in ids]
 
     # -- execucao ---------------------------------------------------------------------
 
@@ -187,7 +220,8 @@ class GeradorDeSintese:
         descartados: list[ExemploDescartado] = []
         for g in gerados:
             pedido = por_indice.get(g.indice)
-            motivo = self._motivo_de_descarte(g, pedido, dedup)
+            validos, invalidos = self._normalizar_citacoes(g.artigos_citados)
+            motivo = self._motivo_de_descarte(g, pedido, dedup, validos)
             if motivo is not None:
                 descartados.append(ExemploDescartado(
                     job_id=job.id, motivo=motivo[0], pergunta=g.pergunta,
@@ -195,7 +229,6 @@ class GeradorDeSintese:
                 ))
                 continue
             dedup.adicionar(g.pergunta, ORIGEM_JOB)
-            validos, invalidos = self._normalizar_citacoes(g.artigos_citados)
             aceitos.append(ExemploSintetico(
                 id=hash_da_pergunta(g.pergunta), job_id=job.id, tipo=pedido.tipo, dificuldade=g.dificuldade,
                 pergunta=g.pergunta.strip(), raciocinio=g.raciocinio.strip(), resposta=g.resposta.strip(),
@@ -209,17 +242,26 @@ class GeradorDeSintese:
 
     @staticmethod
     def _motivo_de_descarte(
-        g: ExemploGerado, pedido: PedidoDeExemplo | None, dedup: Deduplicador
+        g: ExemploGerado, pedido: PedidoDeExemplo | None, dedup: Deduplicador, citados: list[str]
     ) -> tuple[str, str] | None:
-        """(motivo, detalhe) do descarte, ou None se o exemplo segue."""
+        """(motivo, detalhe) do descarte, ou None se o exemplo segue.
+        `citados` sao os ids ja normalizados e existentes no corpus."""
 
         if pedido is None:
             return MOTIVO_INDICE_DESCONHECIDO, f"indice={g.indice}"
-        marca = marca_de_injecao(f"{g.pergunta}\n{g.raciocinio}\n{g.resposta}")
+        texto = f"{g.pergunta}\n{g.raciocinio}\n{g.resposta}"
+        marca = marca_de_injecao(texto)
         if marca:
             return MOTIVO_INJECAO, marca
         if len(g.pergunta.strip()) < PERGUNTA_MINIMA_CHARS:
             return MOTIVO_PERGUNTA_CURTA, ""
+        referencia = _RE_REFERENCIA_AO_CONTEXTO.search(texto)
+        if referencia:
+            return MOTIVO_REFERENCIA_AO_CONTEXTO, referencia.group(0)
+        entregues = {artigo_de(t.id) for t in pedido.contexto}
+        fora = [c for c in citados if artigo_de(c) not in entregues]
+        if fora:
+            return MOTIVO_CITACAO_FORA_DO_CONTEXTO, ", ".join(fora)
         duplicata = dedup.verificar(g.pergunta)
         if duplicata is not None:
             motivo = MOTIVO_VAZAMENTO if duplicata.origem == ORIGEM_BANCO_INICIAL else MOTIVO_DUPLICATA

@@ -25,7 +25,14 @@ from app.services.sintese import gerador as gerador_mod
 from app.services.sintese.cenarios import Cenario, CenariosInvalidos, SorteioDeCenarios, carregar_cenarios
 from app.services.sintese.dedup import Deduplicador, hash_da_pergunta
 from app.services.sintese.gerador import GeradorDeSintese, novo_job
-from app.services.sintese.llm_service import VERSAO_DO_PROMPT, ExemploGerado, PedidoDeExemplo, _build_user_prompt
+from app.services.sintese.llm_service import (
+    _SYSTEM_PROMPT,
+    VERSAO_DO_PROMPT,
+    ExemploGerado,
+    PedidoDeExemplo,
+    _build_user_prompt,
+)
+from app.services.sintese.taxonomia import TAXONOMIA
 
 _LEI = """
 Art. 1º Esta Lei dispõe sobre o tratamento de dados pessoais para proteger a privacidade.
@@ -115,7 +122,7 @@ class TestPlano:
         pedido = g.planejar(ParametrosDeSintese(quantidade=1, seed=1))[0]
         assert pedido.contexto[0].id == pedido.alvo_id
         assert pedido.contexto[0].texto.startswith("Art.")
-        assert len(pedido.contexto) <= 1 + gerador_mod.RELACIONADOS_POR_PEDIDO
+        assert len(pedido.contexto) <= 1 + len(TAXONOMIA[pedido.tipo].ancoras) + gerador_mod.RELACIONADOS_POR_PEDIDO
         assert all(t.id != pedido.alvo_id for t in pedido.contexto[1:])
 
     def test_prompt_do_usuario_marca_o_contexto_como_dado(self, corpus, repositorio):
@@ -381,3 +388,85 @@ class TestCenarios:
             assert not marca_de_injecao(c.cenario), c.id
             assert c.trecho and 20 <= len(c.trecho), c.id
             assert c.guia and c.pagina >= 1
+
+
+class TestAncorasEContexto:
+    """Alem do alvo e dos relacionados, o contexto leva os artigos-ancora do
+    tipo. Sem a definicao legal em contexto, classificar dado so' produzia
+    abstencao ('o trecho fornecido nao contem a definicao') ou citacao de
+    memoria -- os erros mapeados no piloto. Os dois agora descartam."""
+
+    def test_identificacao_de_dado_recebe_as_definicoes(self, corpus, repositorio):
+        g = GeradorDeSintese(ServicoDuble(), corpus, repositorio, banco_inicial=[])
+        pedidos = g.planejar(ParametrosDeSintese(quantidade=5, seed=1, tipos=[TipoDeTarefa.IDENTIFICACAO_DE_DADO]))
+        for p in pedidos:
+            ids = [t.id for t in p.contexto]
+            assert ids[0] == p.alvo_id and len(ids) == len(set(ids))
+            assert "LGPD:art.5" in ids
+            if p.alvo_id != "LGPD:art.5":
+                assert ids[1] == "LGPD:art.5"
+            # Ancora que o corpus nao tem (art. 11 e 12 no corpus de teste) e' pulada, nao inventada.
+            assert not {"LGPD:art.11", "LGPD:art.12"} & set(ids)
+
+    def test_sem_resposta_nao_tem_ancora(self, corpus, repositorio):
+        g = GeradorDeSintese(ServicoDuble(), corpus, repositorio, banco_inicial=[])
+        p = g.planejar(ParametrosDeSintese(quantidade=1, seed=1, tipos=[TipoDeTarefa.SEM_RESPOSTA]))[0]
+        relacionados = [r.id for r in corpus.relacionados(p.alvo_id, k=gerador_mod.RELACIONADOS_POR_PEDIDO)]
+        assert [t.id for t in p.contexto][1:] == relacionados
+
+    @pytest.mark.skipif(not Path("recursos/fontes/lgpd.txt").exists(), reason="texto da LGPD nao baixado")
+    def test_ancoras_da_taxonomia_existem_na_lgpd(self):
+        texto = Path("recursos/fontes/lgpd.txt").read_text(encoding="utf-8").splitlines()
+        lgpd = ingestao.Corpus("LGPD", chunkar(texto), Path("recursos/fontes/lgpd.txt"))
+        for d in TAXONOMIA.values():
+            assert all(re.fullmatch(r"LGPD:art\.\d+", a) and lgpd.existe(a) for a in d.ancoras), d.tipo
+        assert TAXONOMIA[TipoDeTarefa.SEM_RESPOSTA].ancoras == ()
+        assert "LGPD:art.5" in TAXONOMIA[TipoDeTarefa.IDENTIFICACAO_DE_DADO].ancoras
+        assert "LGPD:art.7" in TAXONOMIA[TipoDeTarefa.BASE_LEGAL].ancoras
+
+    async def test_citacao_de_artigo_fora_do_contexto_e_descartada(self, corpus, repositorio):
+        def cita_fora(p):
+            entregues = {t.id for t in p.contexto}
+            fora = next(a for a in ("LGPD:art.48", "LGPD:art.18", "LGPD:art.7", "LGPD:art.5") if a not in entregues)
+            return _gerado(p.indice, "Pergunta plausivel cuja resposta cita artigo que o professor nao recebeu?", [p.alvo_id, fora])
+
+        g = GeradorDeSintese(ServicoDuble({"LGPD:art.1": cita_fora}), corpus, repositorio, banco_inicial=[])
+        params = ParametrosDeSintese(quantidade=5, seed=1, tipos=[TipoDeTarefa.SEM_RESPOSTA], tamanho_do_lote=5, teto_usd=0)
+        job = await g.executar(novo_job(params))
+        assert job.aceitos == 4
+        assert job.descartes_por_motivo == {gerador_mod.MOTIVO_CITACAO_FORA_DO_CONTEXTO: 1}
+        descartado = repositorio.descartados(job.id)[0]
+        assert descartado.detalhe.startswith("LGPD:art.") and descartado.tipo == TipoDeTarefa.SEM_RESPOSTA
+
+    async def test_inciso_de_artigo_em_contexto_nao_e_fora(self, corpus, repositorio):
+        especiais = {"LGPD:art.1": lambda p: _gerado(p.indice, "O que e' dado pessoal segundo a definicao legal?", ["LGPD:art.5:inc.I"])}
+        g = GeradorDeSintese(ServicoDuble(especiais), corpus, repositorio, banco_inicial=[])
+        params = ParametrosDeSintese(quantidade=5, seed=1, tipos=[TipoDeTarefa.CONCEITO], tamanho_do_lote=5, teto_usd=0)
+        job = await g.executar(novo_job(params))
+        assert job.descartados == 0
+        e = next(e for e in repositorio.exemplos(job.id) if "definicao legal" in e.pergunta)
+        assert e.artigos_citados == ["LGPD:art.5:inc.I"] and "LGPD:art.5" in e.contexto_ids
+
+    async def test_resposta_que_fala_do_texto_fornecido_e_descartada(self, corpus, repositorio):
+        especiais = {
+            "LGPD:art.1": lambda p: _gerado(
+                p.indice, "Endereco residencial e' dado pessoal sensivel?", [p.alvo_id],
+                resposta="O trecho fornecido nao contem a definicao de dado pessoal, entao nao e' possivel classificar.",
+            ),
+            # 'no contexto de' e' portugues normal, nao referencia ao prompt.
+            "LGPD:art.7": lambda p: _gerado(
+                p.indice, "Loja pode usar o e-mail do cliente para cobranca?", [p.alvo_id],
+                resposta="No contexto de uma relacao de consumo, o tratamento se apoia em hipotese legal.",
+            ),
+        }
+        g = GeradorDeSintese(ServicoDuble(especiais), corpus, repositorio, banco_inicial=[])
+        params = ParametrosDeSintese(quantidade=5, seed=1, tipos=[TipoDeTarefa.CONCEITO], tamanho_do_lote=5, teto_usd=0)
+        job = await g.executar(novo_job(params))
+        assert job.aceitos == 4
+        assert job.descartes_por_motivo == {gerador_mod.MOTIVO_REFERENCIA_AO_CONTEXTO: 1}
+        assert repositorio.descartados(job.id)[0].detalhe == "trecho fornecido"
+
+    def test_prompt_do_sistema_exige_resposta_autossuficiente(self):
+        assert "lidos SEM o contexto" in _SYSTEM_PROMPT
+        assert "DEFINE o termo" in _SYSTEM_PROMPT
+        assert "restrinja a pergunta" in _SYSTEM_PROMPT

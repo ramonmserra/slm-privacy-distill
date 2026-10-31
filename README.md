@@ -63,8 +63,10 @@ em `GET /api/v1/usage/providers` quando coincidem.
 
 **Onde entra o RAG.** A síntese é *geração ancorada em recuperação*: a LGPD
 é quebrada em dispositivos com id canônico (`LGPD:art.7:inc.IX`) e indexada
-por BM25. Para cada exemplo pedido, o gerador recupera o artigo-alvo e os
-artigos relacionados e os entrega ao professor como contexto; o professor só
+por BM25. Para cada exemplo pedido, o gerador recupera o artigo-alvo, os
+artigos-âncora do tipo de tarefa (as definições do art. 5º para classificar
+dado, as hipóteses do art. 7º para base legal...) e os artigos relacionados
+e os entrega ao professor como contexto; o professor só
 pode citar ids que recebeu, e cada id citado é conferido no corpus por
 código, não por confiança. O mesmo índice servirá à condição de controle
 "aluno com RAG sem treino" e ao rastro de embasamento do juiz.

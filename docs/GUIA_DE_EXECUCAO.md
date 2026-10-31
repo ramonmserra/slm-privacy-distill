@@ -315,6 +315,24 @@ false` no corpo; a mesma `seed` sorteia os mesmos artigos nos dois casos.
 Trocar o arquivo de cenários **não** muda a `versao_do_prompt` (cenário é
 dado, não prompt), então registre o commit do arquivo junto com a versão.
 
+**Contexto por tipo e descartes de lastro.** Além do artigo-alvo sorteado e
+dos dois relacionados por BM25, cada pedido leva os *artigos-âncora* do tipo
+de tarefa (campo `ancoras` em `app/services/sintese/taxonomia.py`): art. 5º
+e 6º para `conceito`; art. 7º e 11 para `base_legal`; art. 5º, 11 e 12 para
+`identificacao_de_dado`; art. 18 para `direitos_do_titular`; art. 46 e 48
+para `incidente`; art. 5º e 46 para `deveres_dos_agentes`; art. 6º e 7º para
+`analise_de_caso`. `sem_resposta` não tem âncora. Isso corrige o erro do
+primeiro piloto, em que o professor recebia, por exemplo, o art. 30 para
+classificar dados e, sem a definição legal em contexto, respondia "o trecho
+fornecido não contém a definição" ou citava o art. 5º de memória. Dois
+descartes novos fecham a cadeia: `citacao_fora_do_contexto` (o professor
+citou artigo que não recebeu; o juiz não poderia conferir) e
+`referencia_ao_contexto` (a resposta fala "do texto fornecido", "dos
+dispositivos disponíveis" etc.; o aluno responderá sem contexto nenhum).
+Os dois aparecem em `descartes_por_motivo` e na Fonte **Síntese —
+descartados**. Como o contexto ficou maior, espere custo por exemplo um
+pouco acima do piloto anterior.
+
 **No front:** tela **Inspeção** → Fonte **Síntese — exemplos** → Job
 `[ID_PILOTO]` → **Carregar**. Cada cartão mostra tipo, dificuldade, a
 etiqueta `cenário anpd-...` quando houve cenário, pergunta, raciocínio,
@@ -335,7 +353,10 @@ do Swagger.
 | Cobertura de tipos e dificuldades | cabeçalho dos cartões | os 8 tipos aparecem; não é só `conceito` básico |
 | Cenário bem usado | etiqueta `cenário ...` e `pergunta` | a pergunta ambienta a situação com palavras próprias; não diz "o cenário", "o guia" nem "a ANPD"; a resposta não afirma regra que só o guia traria (isso é caso de abstenção) |
 | Cenários presentes | `cenario_id` nos cartões | preenchido na grande maioria; `null` só é esperado com `com_cenarios: false` ou em tipo sem cenário cadastrado |
-| Descartes fazem sentido | Fonte **Síntese — descartados** | duplicatas são mesmo duplicatas; vazamento do banco inicial foi pego |
+| Resposta autossuficiente | `resposta` e `raciocinio` | lê-se sem o prompt: fala da lei ("a LGPD define", "o art. 11 exige"), nunca "o trecho fornecido" ou "os dispositivos disponíveis" |
+| Conclui quando a lei define | cartões com `tipo` diferente de `sem_resposta` | classificação de dado e base legal têm conclusão item a item; abstenção só quando falta regra ou fato, não quando a definição está no art. 5º |
+| Definição no dispositivo certo | `artigos_citados` | "dado de saúde é sensível" cita o art. 5º, II (a definição), não o art. 11, § 4º (que só menciona saúde) |
+| Descartes fazem sentido | Fonte **Síntese — descartados** | duplicatas são mesmo duplicatas; vazamento do banco inicial foi pego; `citacao_fora_do_contexto` e `referencia_ao_contexto` em poucos casos (muitos = o professor não está seguindo o prompt) |
 
 **Download:** para o grupo ler fora do painel (planilha, impressão), na
 tela **Inspeção** com Fonte **Síntese — exemplos** e o job `[ID_PILOTO]`

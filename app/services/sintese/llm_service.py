@@ -7,7 +7,7 @@ dublê em teste) + implementacao concreta agnostica de provedor sobre
 nao por pedido -- custo e latencia caem com o lote, e o system prompt
 (grande, igual em todos os lotes) fica cacheavel.
 
-RAG: o contexto de cada pedido vem do corpus (artigo-alvo + relacionados,
+RAG: o contexto de cada pedido vem do corpus (artigo-alvo + ancoras do tipo + relacionados,
 ver `gerador`). O professor e' instruido a citar SO' ids que recebeu; o que
 ele citar fora disso e' verificado deterministicamente depois.
 
@@ -72,19 +72,30 @@ _SYSTEM_PROMPT = (
     "produz exemplos de treino (pergunta, raciocinio e resposta) para um modelo menor aprender a "
     "raciocinar sobre a Lei Geral de Protecao de Dados (LGPD, Lei 13.709/2018).\n"
     "Para CADA pedido do lote voce recebe: o tipo de tarefa, a dificuldade e o CONTEXTO -- o texto "
-    "integral do artigo-alvo e de artigos relacionados, cada dispositivo com seu id canonico "
+    "integral do artigo-alvo, dos artigos de base do tipo de tarefa (definicoes, hipoteses legais, "
+    "direitos, incidentes) e de artigos relacionados, cada dispositivo com seu id canonico "
     "(ex.: LGPD:art.7:inc.IX). Produza exatamente UM exemplo por pedido, com o mesmo `indice`.\n"
     "REGRAS DE FUNDAMENTACAO: toda afirmacao normativa da resposta precisa estar sustentada por um "
     "dispositivo presente no contexto, citado pelo id canonico em `artigos_citados` e no "
     "`raciocinio`. NUNCA cite dispositivo que nao esteja no contexto, nem invente numero de artigo, "
     "prazo, valor, percentual ou regra. Onde a lei remete a regulamento da autoridade nacional ou "
-    "depende de fato nao informado, DIGA isso em vez de completar.\n"
+    "depende de fato nao informado, DIGA isso em vez de completar. Formule a pergunta DEPOIS de ler "
+    "o contexto: ela so' pode exigir o que o contexto responde; se o caso que voce imaginou precisa "
+    "de regra que nao esta' no contexto, restrinja a pergunta em vez de completar a resposta de "
+    "memoria (excecao: o tipo sem_resposta, em que a lacuna e' o objeto do exemplo). Classificacoes "
+    "(dado pessoal, sensivel, anonimizado, controlador, operador, encarregado) se fundamentam no "
+    "dispositivo que DEFINE o termo, nao em dispositivo que apenas o menciona.\n"
     "REGRAS DE REDACAO: portugues do Brasil, linguagem juridica precisa e acessivel. A pergunta e' "
     "AUTOCONTIDA (traz os fatos de que a resposta precisa) e nao menciona 'o artigo acima' nem 'o "
     "contexto'. A dificuldade pedida orienta o caso: basica = aplicacao direta de um dispositivo; "
     "intermediaria = combinar dois dispositivos ou uma excecao; avancada = conflito entre regras, "
     "informacao faltante ou interpretacao sistematica. Evite conclusoes absolutas ('sempre', "
-    "'nunca', 'qualquer') onde a lei preve condicoes e excecoes.\n"
+    "'nunca', 'qualquer') onde a lei preve condicoes e excecoes. A resposta e o raciocinio serao "
+    "lidos SEM o contexto: nunca escreva 'o trecho fornecido', 'os dispositivos disponiveis', 'o "
+    "texto apresentado' nem 'o contexto'; fale da lei ('a LGPD define...', 'o art. 11 exige...'). "
+    "Quando a lei nao resolve, diga 'a LGPD nao traz regra expressa sobre...' ou 'depende de fato "
+    "nao informado'. Fora do tipo sem_resposta, a resposta CONCLUI: abster-se so' quando a lacuna "
+    "e' real, nunca quando a definicao ou a regra esta' no contexto.\n"
     "DADOS PESSOAIS: os casos sao FICTICIOS. Use marcadores no lugar de dados reais -- [PESSOA], "
     "[EMPRESA], [CPF], [EMAIL], [TELEFONE], [ENDERECO], [DATA] -- e nunca nomes de pessoas reais, "
     "empresas reais ou documentos verdadeiros.\n"
