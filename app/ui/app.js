@@ -4,7 +4,8 @@
   "use strict";
   const API = "/api/v1";
   const $ = (id) => document.getElementById(id);
-  const estado = { anot: { itens: [], pos: 0, run: null, feitos: new Set() }, insp: { offset: 0 }, runs: [] };
+  const estado = { anot: { itens: [], pos: 0, run: null, feitos: new Set() }, insp: { offset: 0 }, runs: [], cmp: null, tabela: null };
+  const PAGINA_DE_DOWNLOAD = 500; // limite maximo das rotas paginadas da API
 
   // ------------------------------------------------------------ utilidades
   function chave() { return sessionStorage.getItem("gena_api_key") || ""; }
@@ -27,6 +28,36 @@
     select.innerHTML = lista.length ? lista.map((x) => `<option value="${esc(valor(x))}">${esc(rotulo(x))}</option>`).join("") : `<option value="">${vazio}</option>`;
   };
   const classeStatus = (s) => s === "concluido" ? "ok" : (s === "falhou" || s === "orcamento_excedido") ? "erro" : "atencao";
+
+  // ------------------------------------------------------------ download
+  // Tudo que a API devolve pode ser salvo pelo navegador. Nao ha <a href>
+  // direto porque a chave vai no header, nao na URL.
+  function salvarArquivo(nome, conteudo, tipo = "application/json") {
+    const blob = conteudo instanceof Blob ? conteudo : new Blob([conteudo], { type: tipo });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const salvarJson = (nome, dados) => salvarArquivo(nome, JSON.stringify(dados, null, 2));
+  async function baixarRota(rota, nome) {
+    const resp = await fetch(API + rota, { headers: { "X-API-Key": chave() } });
+    if (!resp.ok) throw new Error(`${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+    salvarArquivo(nome, await resp.blob());
+  }
+  // Percorre uma rota paginada (limite/offset) ate' a ultima pagina.
+  async function todasAsPaginas(rota) {
+    const tudo = []; let offset = 0;
+    for (;;) {
+      const pagina = await api(rota(`limite=${PAGINA_DE_DOWNLOAD}&offset=${offset}`));
+      tudo.push(...pagina);
+      if (pagina.length < PAGINA_DE_DOWNLOAD) return tudo;
+      offset += PAGINA_DE_DOWNLOAD;
+    }
+  }
+  async function comBotao(botao, acao) {
+    botao.disabled = true;
+    try { await acao(); toast("Download pronto."); } catch (e) { toast(e.message, true); } finally { botao.disabled = false; }
+  }
 
   // ------------------------------------------------------------ chave e abas
   $("api-key").value = chave();
@@ -101,6 +132,13 @@
     const run = $("an-run").value; if (!run) return;
     try { $("an-calibracao").textContent = JSON.stringify(await api(`/avaliacao/runs/${run}/calibracao`), null, 2); } catch (e) { toast(e.message, true); }
   };
+  $("an-baixar").onclick = () => {
+    const run = $("an-run").value; if (!run) return toast("Escolha um run.", true);
+    comBotao($("an-baixar"), async () => {
+      const [calibracao, anotacoes] = await Promise.all([api(`/avaliacao/runs/${run}/calibracao`), api(`/avaliacao/runs/${run}/anotacoes`)]);
+      salvarJson(`anotacoes-${run}.json`, { calibracao, anotacoes });
+    });
+  };
 
   // ------------------------------------------------------------ INSPEÇÃO
   const FONTES = {
@@ -119,8 +157,26 @@
     const rot = (j) => `${j.id} · ${j.status} · ${j.modelo || j.aluno || j.modelo_juiz || ""} ${j.aceitos != null ? `· aceitos ${j.aceitos}` : ""}${j.aprovados != null ? `· aprovados ${j.aprovados}` : ""}`;
     opcoes($("in-job"), jobs, rot, (j) => j.id, "nenhum job");
     estado.insp.offset = 0;
+    arquivosDaInspecao();
+  }
+  // Rotas de arquivo (JSONL inteiro) que existem so' para o on-policy.
+  function arquivosDaInspecao() {
+    const job = $("in-job").value, onPolicy = $("in-fonte").value.startsWith("on-policy");
+    $("in-arquivos").innerHTML = onPolicy && job
+      ? ["sft", "dpo", "amostras"].map((n) => `<button class="mini-btn in-arquivo" data-nome="${n}">${n}.jsonl</button>`).join("")
+      : "";
+    document.querySelectorAll(".in-arquivo").forEach((b) => b.onclick = () => comBotao(b, () => baixarRota(`/on-policy/jobs/${job}/arquivo/${b.dataset.nome}`, `${job}-${b.dataset.nome}.jsonl`)));
   }
   $("in-fonte").onchange = () => listarJobsDaInspecao().catch((e) => toast(e.message, true));
+  $("in-job").onchange = arquivosDaInspecao;
+  $("in-baixar").onclick = () => {
+    const fonte = $("in-fonte").value, f = FONTES[fonte], job = $("in-job").value;
+    if (!job) return toast("Nenhum job selecionado.", true);
+    comBotao($("in-baixar"), async () => {
+      const dados = f.semPaginacao ? await api(f.rota(job)) : await todasAsPaginas((q) => f.rota(job, q));
+      salvarJson(`${fonte}-${job}.json`, dados);
+    });
+  };
   $("in-carregar").onclick = () => { estado.insp.offset = 0; inspecionar(); };
   $("in-proximo").onclick = () => { estado.insp.offset += +$("in-limite").value; inspecionar(); };
   $("in-anterior").onclick = () => { estado.insp.offset = Math.max(0, estado.insp.offset - +$("in-limite").value); inspecionar(); };
@@ -149,7 +205,7 @@
   const campo = (titulo, valor, cls = "") => valor == null || valor === "" ? "" : `<div class="campo"><b>${titulo}</b><span class="${cls}">${esc(valor)}</span></div>`;
   const metas = (...xs) => `<div class="meta">${xs.filter(Boolean).map((x) => `<span class="rotulo">${esc(x)}</span>`).join("")}</div>`;
   function cartaoExemplo(e) {
-    return `<div class="item">${metas(e.id, e.tipo, e.dificuldade, e.citacoes_validas ? "citações válidas" : "CITAÇÃO INVÁLIDA")}
+    return `<div class="item">${metas(e.id, e.tipo, e.dificuldade, e.cenario_id ? `cenário ${e.cenario_id}` : "", e.citacoes_validas ? "citações válidas" : "CITAÇÃO INVÁLIDA")}
       ${campo("Pergunta", e.pergunta)}${campo("Raciocínio", e.raciocinio)}${campo("Resposta", e.resposta)}
       ${campo("Artigos citados", e.artigos_citados.join(", "))}${campo("Citações inválidas", e.artigos_citados_invalidos.join(", "), "erro")}</div>`;
   }
@@ -176,9 +232,9 @@
   $("pa-atualizar").onclick = painel;
   async function painel() {
     try {
-      const [saude, prov, custos, s, f, op, tr] = await Promise.all([
+      const [saude, prov, custos, s, f, op, tr, datasets] = await Promise.all([
         fetch("/health/ready").then((r) => r.json()), api("/usage/providers"), api("/relatorios/custos"),
-        api("/sintese/jobs"), api("/filtro/jobs"), api("/on-policy/jobs"), api("/treinos"),
+        api("/sintese/jobs"), api("/filtro/jobs"), api("/on-policy/jobs"), api("/treinos"), api("/datasets"),
       ]);
       await carregarRuns();
       $("pa-saude").textContent = JSON.stringify({ saude: saude.checks, papeis: prov.papeis.map((p) => `${p.papel}: ${p.modelo}${p.credencial_presente ? "" : " (SEM CREDENCIAL)"}`), avisos: prov.avisos }, null, 2);
@@ -192,12 +248,28 @@
       ].sort((a, b) => (b.criado_em || "").localeCompare(a.criado_em || ""));
       $("pa-jobs").innerHTML = `<tr><th>Tipo</th><th>Id</th><th>Status</th><th>Resumo</th><th>US$</th><th>Criado</th></tr>` +
         jobs.map((j) => `<tr><td>${j.tipo}</td><td><code>${esc(j.id)}</code></td><td class="${classeStatus(j.status)}">${esc(j.status)}</td><td>${esc(j.resumo)}</td><td class="num">${j.custo_usd == null ? "-" : (+j.custo_usd).toFixed(4)}</td><td>${esc((j.criado_em || "").slice(0, 16).replace("T", " "))}</td></tr>`).join("");
-      $("pa-runs").innerHTML = `<tr><th></th><th>Id</th><th>Modelo</th><th>Conjunto</th><th>Status</th><th>n</th><th>Acurácia [IC95]</th><th>Alucinação [IC95]</th><th>Abst.</th><th>p50 ms</th><th>US$/item</th><th>Medida</th></tr>` +
-        estado.runs.map((r) => { const m = r.metricas; return `<tr><td><input type="checkbox" class="pa-sel" value="${esc(r.id)}"></td><td><code>${esc(r.id)}</code></td><td><code>${esc(r.modelo)}</code></td><td>${esc(r.parametros.conjunto)}${r.parametros.com_rag ? " +RAG" : ""}</td><td class="${classeStatus(r.status)}">${esc(r.status)}</td><td class="num">${m.julgados}</td><td>${pct(m.acuracia, m.acuracia_ic95)}</td><td>${pct(m.taxa_de_alucinacao, m.taxa_de_alucinacao_ic95)}</td><td>${m.abstencoes_esperadas ? `${m.abstencoes_adequadas}/${m.abstencoes_esperadas}` : "-"}</td><td class="num">${m.latencia_p50_ms ?? "-"}</td><td class="num">${m.custo_usd_por_item ?? "-"}</td><td><code>${esc(r.versao_da_medida)}</code></td></tr>`; }).join("");
+      $("pa-datasets").innerHTML = `<tr><th>Versão</th><th>Nome</th><th>Treino</th><th>Held-out</th><th>Criado</th><th>Baixar</th></tr>` +
+        (datasets.length ? datasets.map((d) => `<tr><td><code>${esc(d.versao)}</code></td><td>${esc(d.nome)}</td><td class="num">${d.treino.total}</td><td class="num">${d.held_out.total}</td><td>${esc((d.criado_em || "").slice(0, 16).replace("T", " "))}</td><td>` +
+          `<button class="mini-btn pa-ds" data-versao="${esc(d.versao)}" data-o="manifesto">manifesto.json</button>` +
+          `<button class="mini-btn pa-ds" data-versao="${esc(d.versao)}" data-o="treino">treino.jsonl</button>` +
+          `<button class="mini-btn pa-ds" data-versao="${esc(d.versao)}" data-o="held_out">held_out.jsonl</button></td></tr>`).join("")
+        : `<tr><td colspan="6" class="mini">nenhum dataset</td></tr>`);
+      document.querySelectorAll(".pa-ds").forEach((b) => b.onclick = () => comBotao(b, () => {
+        const v = b.dataset.versao, o = b.dataset.o;
+        return o === "manifesto" ? api(`/datasets/${v}`).then((m) => salvarJson(`${v}-manifesto.json`, m)) : baixarRota(`/datasets/${v}/arquivo/${o}`, `${v}-${o}.jsonl`);
+      }));
+      $("pa-runs").innerHTML = `<tr><th></th><th>Id</th><th>Modelo</th><th>Conjunto</th><th>Status</th><th>n</th><th>Acurácia [IC95]</th><th>Alucinação [IC95]</th><th>Abst.</th><th>p50 ms</th><th>US$/item</th><th>Medida</th><th></th></tr>` +
+        estado.runs.map((r) => { const m = r.metricas; return `<tr><td><input type="checkbox" class="pa-sel" value="${esc(r.id)}"></td><td><code>${esc(r.id)}</code></td><td><code>${esc(r.modelo)}</code></td><td>${esc(r.parametros.conjunto)}${r.parametros.com_rag ? " +RAG" : ""}</td><td class="${classeStatus(r.status)}">${esc(r.status)}</td><td class="num">${m.julgados}</td><td>${pct(m.acuracia, m.acuracia_ic95)}</td><td>${pct(m.taxa_de_alucinacao, m.taxa_de_alucinacao_ic95)}</td><td>${m.abstencoes_esperadas ? `${m.abstencoes_adequadas}/${m.abstencoes_esperadas}` : "-"}</td><td class="num">${m.latencia_p50_ms ?? "-"}</td><td class="num">${m.custo_usd_por_item ?? "-"}</td><td><code>${esc(r.versao_da_medida)}</code></td><td><button class="mini-btn pa-baixar-run" data-run="${esc(r.id)}">baixar</button></td></tr>`; }).join("");
       document.querySelectorAll(".pa-sel").forEach((c) => c.onchange = camposDeRotulo);
+      document.querySelectorAll(".pa-baixar-run").forEach((b) => b.onclick = () => comBotao(b, async () => {
+        const id = b.dataset.run;
+        const [run, itens] = await Promise.all([api(`/avaliacao/runs/${id}`), todasAsPaginas((q) => `/avaliacao/runs/${id}/itens?${q}`)]);
+        salvarJson(`avaliacao-${id}.json`, { run, itens });
+      }));
       camposDeRotulo();
     } catch (e) { toast(e.message, true); }
   }
+  $("pa-baixar-custos").onclick = () => comBotao($("pa-baixar-custos"), async () => salvarJson("custos.json", await api("/relatorios/custos")));
   function camposDeRotulo() {
     const sel = [...document.querySelectorAll(".pa-sel:checked")].map((c) => c.value);
     $("pa-rotulos").innerHTML = sel.map((id) => `<label class="bloco"><code>${esc(id)}</code> <input data-run="${esc(id)}" placeholder="rótulo da condição, ex.: C3 SFT filtrado"></label>`).join("") || "<span class='mini'>nenhum run marcado</span>";
@@ -206,21 +278,31 @@
     try {
       const c = await api(`/avaliacao/comparar?a=${$("pa-cmp-a").value}&b=${$("pa-cmp-b").value}`);
       $("pa-cmp-leitura").innerHTML = `<b>${esc(c.leitura)}</b>`; $("pa-cmp").textContent = JSON.stringify(c, null, 2);
+      estado.cmp = c; $("pa-cmp-baixar").disabled = false;
     } catch (e) { toast(e.message, true); }
   };
+  $("pa-cmp-baixar").onclick = () => { if (estado.cmp) salvarJson(`comparacao-${estado.cmp.run_a}-vs-${estado.cmp.run_b}.json`, estado.cmp); };
   $("pa-tabela").onclick = async () => {
     const inputs = [...document.querySelectorAll("#pa-rotulos input")];
     if (!inputs.length) return toast("Marque runs na tabela.", true);
     const runs = inputs.map((i) => i.dataset.run).join(",");
     const rotulos = inputs.filter((i) => i.value.trim()).map((i) => `${i.dataset.run}:${i.value.trim()}`).join(",");
     try {
-      const md = await api(`/relatorios/condicoes.md?runs=${runs}&rotulos=${encodeURIComponent(rotulos)}`);
+      const consulta = `runs=${runs}&rotulos=${encodeURIComponent(rotulos)}`;
+      const md = await api(`/relatorios/condicoes.md?${consulta}`);
       $("pa-tabela-md").textContent = md;
+      estado.tabela = { consulta, md }; $("pa-tabela-baixar-md").disabled = false; $("pa-tabela-baixar-json").disabled = false;
       const linhas = md.split("\n").filter((l) => l.startsWith("|")).map((l) => l.slice(1, -1).split("|").map((c) => c.trim()));
       const [cab, , ...corpo] = linhas;
       $("pa-tabela-html").innerHTML = `<table class="tabela"><tr>${cab.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${corpo.map((r) => `<tr>${r.map((c) => `<td>${esc(c.replace(/`/g, ""))}</td>`).join("")}</tr>`).join("")}</table>`;
     } catch (e) { toast(e.message, true); }
   };
+
+  $("pa-tabela-baixar-md").onclick = () => { if (estado.tabela) salvarArquivo("tabela-condicoes.md", estado.tabela.md, "text/markdown"); };
+  $("pa-tabela-baixar-json").onclick = () => comBotao($("pa-tabela-baixar-json"), async () => {
+    if (!estado.tabela) throw new Error("Gere a tabela primeiro.");
+    salvarJson("tabela-condicoes.json", await api(`/relatorios/condicoes?${estado.tabela.consulta}`));
+  });
 
   // ------------------------------------------------------------ início
   mostrarChave();

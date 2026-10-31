@@ -6,6 +6,8 @@ O que e' DETERMINISTICO aqui (e por isso mora no engine, nao no prompt):
 - o PLANO: artigos sorteados com seed fixa, tipos e dificuldades em ciclo --
   mesma seed, mesmo plano, mesma cobertura;
 - o CONTEXTO (RAG): artigo-alvo + artigos relacionados por BM25;
+- o CENARIO de inspiracao (guias da ANPD): sorteado por tipo com seed
+  derivada da seed do job; ambienta a pergunta e nunca vira citacao;
 - a VERIFICACAO de citacoes: todo id citado e' normalizado e conferido no
   corpus; `citacoes_validas` e' calculado, nunca declarado pelo modelo;
 - a DEDUPLICACAO e a protecao contra vazamento do banco inicial;
@@ -39,6 +41,7 @@ from app.services.corpus.ingestao import Corpus
 from app.services.corpus.referencias import normalizar_referencias
 from app.services.injecao import marca_de_injecao
 from app.services.lotes import ExecutorDeLotes, dividir
+from app.services.sintese.cenarios import Cenario, SorteioDeCenarios, carregar_cenarios
 from app.services.sintese.dedup import Deduplicador, carregar_banco_inicial, hash_da_pergunta
 from app.services.sintese.llm_service import (
     VERSAO_DO_PROMPT,
@@ -81,19 +84,24 @@ class GeradorDeSintese:
         corpus: Corpus,
         repositorio: SinteseRepository,
         banco_inicial: list[str] | None = None,
+        cenarios: list[Cenario] | None = None,
     ) -> None:
         self._servico = servico
         self._corpus = corpus
         self._repositorio = repositorio
         self._banco_inicial = carregar_banco_inicial() if banco_inicial is None else banco_inicial
+        self._cenarios = carregar_cenarios() if cenarios is None else cenarios
 
     # -- plano --------------------------------------------------------------------
 
     def planejar(self, parametros: ParametrosDeSintese) -> list[PedidoDeExemplo]:
         """Um pedido por exemplo desejado. Artigos em sorteio sem reposicao
-        (reembaralhado quando acabam), tipos e dificuldades em ciclo."""
+        (reembaralhado quando acabam), tipos e dificuldades em ciclo; o
+        cenario sai de um gerador proprio (seed derivada) para que ligar ou
+        desligar cenarios nao mude quais artigos cada pedido recebe."""
 
         rng = random.Random(parametros.seed)
+        sorteio = SorteioDeCenarios(self._cenarios, random.Random(f"{parametros.seed}:cenarios")) if parametros.com_cenarios else None
         artigos = self._corpus.artigos()
         if not artigos:
             return []
@@ -106,13 +114,14 @@ class GeradorDeSintese:
                 fila = list(artigos)
                 rng.shuffle(fila)
             alvo = fila.pop()
+            tipo = tipos[i % len(tipos)]
             contexto = [TrechoDeContexto(id=alvo.id, texto=self._corpus.texto_do_artigo(alvo.id))]
             for rel in self._corpus.relacionados(alvo.id, k=RELACIONADOS_POR_PEDIDO):
                 contexto.append(TrechoDeContexto(id=rel.id, texto=self._corpus.texto_do_artigo(rel.id)))
             pedidos.append(
                 PedidoDeExemplo(
-                    indice=i + 1, tipo=tipos[i % len(tipos)], dificuldade=dificuldades[i % len(dificuldades)],
-                    alvo_id=alvo.id, contexto=contexto,
+                    indice=i + 1, tipo=tipo, dificuldade=dificuldades[i % len(dificuldades)],
+                    alvo_id=alvo.id, contexto=contexto, cenario=sorteio.proximo(tipo) if sorteio else None,
                 )
             )
         return pedidos
@@ -192,7 +201,8 @@ class GeradorDeSintese:
                 pergunta=g.pergunta.strip(), raciocinio=g.raciocinio.strip(), resposta=g.resposta.strip(),
                 artigos_citados=validos, artigos_citados_invalidos=invalidos,
                 citacoes_validas=not invalidos and (bool(validos) or pedido.tipo == TipoDeTarefa.SEM_RESPOSTA),
-                contexto_ids=[t.id for t in pedido.contexto], modelo=job.modelo,
+                contexto_ids=[t.id for t in pedido.contexto], cenario_id=pedido.cenario.id if pedido.cenario else None,
+                modelo=job.modelo,
                 versao_do_prompt=VERSAO_DO_PROMPT, criado_em=_agora(),
             ))
         return aceitos, descartados

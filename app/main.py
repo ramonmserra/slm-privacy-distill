@@ -66,6 +66,17 @@ app.include_router(api_router, prefix="/api/v1")
 app.mount("/ui", StaticFiles(directory=Path(__file__).parent / "ui", html=True), name="ui")
 
 
+@app.middleware("http")
+async def _sem_cache_no_front(request, call_next):
+    """O painel e' HTML+JS sem build nem hash no nome: sem este header o
+    navegador guarda o `app.js` antigo e um botao novo "nao aparece"."""
+
+    resposta = await call_next(request)
+    if request.url.path.startswith("/ui"):
+        resposta.headers["Cache-Control"] = "no-cache"
+    return resposta
+
+
 @app.get("/", include_in_schema=False)
 async def raiz() -> RedirectResponse:
     return RedirectResponse(url="/ui/")

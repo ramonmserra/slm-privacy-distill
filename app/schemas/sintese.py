@@ -45,6 +45,7 @@ class ExemploSintetico(BaseModel):
     artigos_citados_invalidos: list[str] = Field(default_factory=list, description="Ids que nao existem no corpus")
     citacoes_validas: bool
     contexto_ids: list[str] = Field(description="Dispositivos entregues ao professor como contexto")
+    cenario_id: str | None = Field(default=None, description="Cenario de inspiracao (guias da ANPD) anexado ao pedido; None quando o job rodou sem cenarios ou o tipo nao tinha cenario")
     modelo: str
     versao_do_prompt: str
     criado_em: dt.datetime
@@ -70,7 +71,8 @@ class ParametrosDeSintese(BaseModel):
     quantidade: int = Field(default=50, ge=1, le=5000, description="Exemplos a PEDIR ao professor")
     tipos: list[TipoDeTarefa] = Field(default_factory=lambda: list(TipoDeTarefa))
     fonte: str = "LGPD"
-    seed: int = Field(default=42, description="Sorteio dos artigos: mesma seed, mesmo plano")
+    seed: int = Field(default=42, description="Sorteio dos artigos e dos cenarios: mesma seed, mesmo plano")
+    com_cenarios: bool = Field(default=True, description="Anexa a cada pedido um cenario de inspiracao dos guias da ANPD; so' ambienta a pergunta, nunca e' fonte citavel")
     tamanho_do_lote: int = Field(default=5, ge=1, le=20, description="Pedidos por chamada ao professor")
     concorrencia: int = Field(default=3, ge=1, le=12)
     teto_usd: float | None = Field(default=None, ge=0, description="Teto deste job; None = LLM_BUDGET_USD_POR_JOB")

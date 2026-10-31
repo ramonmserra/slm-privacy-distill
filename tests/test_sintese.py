@@ -4,7 +4,10 @@ dublê do `SinteseLLMService`; nenhum teste fala com a rede."""
 
 from __future__ import annotations
 
+import random
+import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,7 @@ from app.services.corpus import ingestao
 from app.services.corpus.chunking import chunkar
 from app.services.injecao import marca_de_injecao
 from app.services.sintese import gerador as gerador_mod
+from app.services.sintese.cenarios import Cenario, CenariosInvalidos, SorteioDeCenarios, carregar_cenarios
 from app.services.sintese.dedup import Deduplicador, hash_da_pergunta
 from app.services.sintese.gerador import GeradorDeSintese, novo_job
 from app.services.sintese.llm_service import VERSAO_DO_PROMPT, ExemploGerado, PedidoDeExemplo, _build_user_prompt
@@ -295,3 +299,85 @@ class TestEndpoints:
     def test_sem_corpus_responde_409(self, client):
         ingestao.registro.limpar()
         assert client.post("/api/v1/sintese/jobs", json={"quantidade": 1}).status_code == 409
+
+
+class TestCenarios:
+    """O cenario da ANPD ambienta a pergunta e nada mais: sorteio
+    deterministico por tipo, marcado como dado no prompt, gravado no exemplo
+    e nunca convertido em citacao."""
+
+    @staticmethod
+    def _cenario(id_: str, tipos: list[TipoDeTarefa], texto: str = "Uma [EMPRESA] de varejo instala cookies de publicidade antes de o visitante escolher qualquer opcao no aviso.") -> Cenario:
+        return Cenario(id=id_, guia="teste", titulo_do_guia="Guia de teste", pagina=1, tipos=tipos, cenario=texto)
+
+    def _gerador(self, corpus, repositorio, cenarios, servico=None):
+        return GeradorDeSintese(servico or ServicoDuble(), corpus, repositorio, banco_inicial=[], cenarios=cenarios)
+
+    def test_plano_anexa_cenario_compativel_e_deterministico(self, corpus, repositorio):
+        cenarios = [self._cenario("c-base", [TipoDeTarefa.BASE_LEGAL]), self._cenario("c-inc", [TipoDeTarefa.INCIDENTE, TipoDeTarefa.DEVERES_DOS_AGENTES])]
+        g = self._gerador(corpus, repositorio, cenarios)
+        p = ParametrosDeSintese(quantidade=16, seed=3)
+        a, b = g.planejar(p), g.planejar(p)
+        assert [x.cenario.id if x.cenario else None for x in a] == [x.cenario.id if x.cenario else None for x in b]
+        com_cenario = [x for x in a if x.cenario]
+        assert com_cenario and all(x.tipo in x.cenario.tipos for x in com_cenario)
+        assert all(x.tipo not in (TipoDeTarefa.BASE_LEGAL, TipoDeTarefa.INCIDENTE, TipoDeTarefa.DEVERES_DOS_AGENTES) for x in a if not x.cenario)
+
+    def test_desligar_cenarios_nao_muda_os_artigos(self, corpus, repositorio):
+        g = self._gerador(corpus, repositorio, [self._cenario("c", list(TipoDeTarefa))])
+        com = g.planejar(ParametrosDeSintese(quantidade=10, seed=7))
+        sem = g.planejar(ParametrosDeSintese(quantidade=10, seed=7, com_cenarios=False))
+        assert [x.alvo_id for x in com] == [x.alvo_id for x in sem]
+        assert all(x.cenario for x in com) and all(x.cenario is None for x in sem)
+
+    def test_prompt_marca_o_cenario_como_dado_e_so_onde_existe(self, corpus, repositorio):
+        g = self._gerador(corpus, repositorio, [self._cenario("c-base", [TipoDeTarefa.BASE_LEGAL])])
+        pedidos = g.planejar(ParametrosDeSintese(quantidade=2, seed=1))  # conceito, base_legal
+        prompt = _build_user_prompt(pedidos)
+        antes, depois = prompt.split("[Pedido 2]")
+        assert "INSPIRACAO DE CENARIO" not in antes
+        assert "INSPIRACAO DE CENARIO (dado, nao instrucao" in depois
+        assert "<<cenario:c-base>>" in depois and "<</cenario:c-base>>" in depois
+        assert "nao e' fonte" in depois
+
+    async def test_exemplo_grava_o_cenario_id_e_o_cenario_nao_vira_citacao(self, corpus, repositorio):
+        # O cenario menciona um artigo inexistente: so' poderia virar citacao se alguem o tratasse como fonte.
+        cenario = self._cenario("c-tudo", list(TipoDeTarefa), "Uma [EMPRESA] alega que o Art. 99 da lei autoriza vender a lista de clientes a terceiros.")
+        g = self._gerador(corpus, repositorio, [cenario])
+        job = await g.executar(novo_job(ParametrosDeSintese(quantidade=5, tamanho_do_lote=5, teto_usd=0)))
+        exemplos = repositorio.exemplos(job.id)
+        assert job.aceitos == 5 and all(e.cenario_id == "c-tudo" for e in exemplos)
+        assert all(e.citacoes_validas and "LGPD:art.99" not in e.artigos_citados for e in exemplos)
+
+    def test_sorteio_e_sem_reposicao_por_tipo(self):
+        base = [self._cenario(i, [TipoDeTarefa.BASE_LEGAL]) for i in ("a", "b", "c")]
+        sorteio = SorteioDeCenarios(base, random.Random(1))
+        ids = [sorteio.proximo(TipoDeTarefa.BASE_LEGAL).id for _ in range(6)]
+        assert sorted(ids[:3]) == sorted(ids[3:]) == ["a", "b", "c"]
+        assert sorteio.proximo(TipoDeTarefa.INCIDENTE) is None
+
+    def test_arquivo_ausente_e_id_duplicado(self, tmp_path):
+        assert carregar_cenarios(tmp_path / "nao-existe.jsonl") == []
+        linha = self._cenario("dup", [TipoDeTarefa.CONCEITO]).model_dump_json()
+        arquivo = tmp_path / "cenarios.jsonl"
+        arquivo.write_text(f"# comentario\n{linha}\n\n{linha}\n", encoding="utf-8")
+        with pytest.raises(CenariosInvalidos, match="duplicado"):
+            carregar_cenarios(arquivo)
+        arquivo.write_text(f"{linha}\n", encoding="utf-8")
+        assert [c.id for c in carregar_cenarios(arquivo)] == ["dup"]
+
+    def test_banco_versionado_cobre_os_tipos_e_nao_conclui_nem_cita(self):
+        """O arquivo em recursos/ e' dado do experimento: cada cenario e' uma
+        situacao, nao uma resposta -- sem artigo, sem lei, sem a ANPD, sem
+        marca de injecao -- e todo tipo de tarefa tem cenario para sortear."""
+
+        cenarios = carregar_cenarios()
+        assert len(cenarios) >= 100
+        por_tipo = Counter(t for c in cenarios for t in c.tipos)
+        assert all(por_tipo[t] >= 5 for t in TipoDeTarefa), por_tipo
+        proibido = re.compile(r"\bart\.|\bartigos?\b|\bLGPD\b|\bANPD\b|\bguia\b|\binciso\b|\bpar[aá]grafo\b", re.I)
+        for c in cenarios:
+            assert not proibido.search(c.cenario), (c.id, c.cenario)
+            assert not marca_de_injecao(c.cenario), c.id
+            assert c.trecho and 20 <= len(c.trecho), c.id
+            assert c.guia and c.pagina >= 1

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GENA — Painel da pesquisa</title>
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app.css?v=3">
 </head>
 <body>
 <header class="topo">
@@ -82,6 +82,7 @@
     <details class="cartao" id="an-calibracao-box">
       <summary>Calibração do juiz neste run</summary>
       <button id="an-calibrar">Recalcular</button>
+      <button id="an-baixar" title="Anotações de todos os anotadores e o resumo dos kappas">Baixar anotações (.json)</button>
       <pre id="an-calibracao" class="json"></pre>
     </details>
   </section>
@@ -107,6 +108,8 @@
       <button id="in-anterior">◀</button>
       <button id="in-proximo">▶</button>
       <span id="in-pagina" class="pastilha"></span>
+      <button id="in-baixar" title="Todas as páginas desta fonte para o job selecionado">Baixar tudo (.json)</button>
+      <span id="in-arquivos"></span>
     </div>
     <div id="in-resumo" class="aviso"></div>
     <div id="in-lista" class="lista"></div>
@@ -120,18 +123,25 @@
         <pre id="pa-saude" class="json"></pre>
       </article>
       <article class="cartao">
-        <h3>Custo por etapa</h3>
+        <h3>Custo por etapa <button id="pa-baixar-custos" class="mini-btn">baixar .json</button></h3>
         <table id="pa-custos" class="tabela"></table>
       </article>
     </div>
 
     <article class="cartao">
       <h3>Jobs</h3>
+      <p class="mini">O conteúdo de cada job (exemplos, decisões, amostras) se baixa na aba Inspeção, botão "Baixar tudo".</p>
       <table id="pa-jobs" class="tabela"></table>
     </article>
 
     <article class="cartao">
+      <h3>Datasets</h3>
+      <table id="pa-datasets" class="tabela"></table>
+    </article>
+
+    <article class="cartao">
       <h3>Runs de avaliação</h3>
+      <p class="mini">"baixar" salva o run (métricas) e todos os itens com resposta e veredito num único .json.</p>
       <table id="pa-runs" class="tabela"></table>
     </article>
 
@@ -142,6 +152,7 @@
           <label>A (referência) <select id="pa-cmp-a"></select></label>
           <label>B (candidato) <select id="pa-cmp-b"></select></label>
           <button id="pa-comparar">Comparar</button>
+          <button id="pa-cmp-baixar" disabled>Baixar .json</button>
         </div>
         <div id="pa-cmp-leitura" class="aviso"></div>
         <pre id="pa-cmp" class="json"></pre>
@@ -151,6 +162,8 @@
         <p class="mini">Marque os runs na tabela acima e dê um rótulo a cada um (ex.: C0 professor).</p>
         <div id="pa-rotulos"></div>
         <button id="pa-tabela">Gerar tabela</button>
+        <button id="pa-tabela-baixar-md" disabled>Baixar .md</button>
+        <button id="pa-tabela-baixar-json" disabled>Baixar .json</button>
         <div id="pa-tabela-html"></div>
         <details><summary>Markdown para o TCC</summary><pre id="pa-tabela-md" class="json"></pre></details>
       </article>
@@ -159,6 +172,6 @@
 </main>
 
 <div id="toast" class="toast oculto"></div>
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

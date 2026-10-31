@@ -27,23 +27,38 @@ clique **Entrar**. A chave fica só na sessão da aba. Três telas:
 
 | Tela | Para quê | Controles |
 |---|---|---|
-| **Painel** | saúde e provedores, custo por etapa, lista de todos os jobs, runs de avaliação com métricas, comparação pareada, tabela das condições | botão **atualizar**; selects **A (referência)** e **B (candidato)** + **Comparar**; caixa de seleção por run + campos de rótulo + **Gerar tabela** (HTML e Markdown) |
-| **Inspeção** | ler o conteúdo que cada job produziu, com paginação | select **Fonte** (síntese exemplos/descartados, filtro aprovados/reprovados, on-policy amostras/reprovadas, avaliação erros/todos), select **Job / run**, **Por página**, setas |
-| **Anotação** | calibração humana do juiz | select **Run**, campo **Anotador**, caixa "pular itens que já anotei", caixa "mostrar veredito do juiz" (deixe desmarcada), **Carregar itens**, **Salvar e próximo**, **Recalcular** kappa |
+| **Painel** | saúde e provedores, custo por etapa, lista de todos os jobs, datasets, runs de avaliação com métricas, comparação pareada, tabela das condições | botão **atualizar**; selects **A (referência)** e **B (candidato)** + **Comparar**; caixa de seleção por run + campos de rótulo + **Gerar tabela** (HTML e Markdown); botões de download em custos, datasets, runs, comparação e tabela |
+| **Inspeção** | ler o conteúdo que cada job produziu, com paginação, e baixá-lo inteiro | select **Fonte** (síntese exemplos/descartados, filtro aprovados/reprovados, on-policy amostras/reprovadas, avaliação erros/todos), select **Job / run**, **Por página**, setas, **Baixar tudo (.json)** |
+| **Anotação** | calibração humana do juiz | select **Run**, campo **Anotador**, caixa "pular itens que já anotei", caixa "mostrar veredito do juiz" (deixe desmarcada), **Carregar itens**, **Salvar e próximo**, **Recalcular** kappa, **Baixar anotações (.json)** |
 
 ## Como baixar os dados de cada etapa
 
-Tudo o que um passo produz pode ser baixado de três jeitos. Cada passo
+Tudo o que um passo produz pode ser baixado de quatro jeitos. Cada passo
 abaixo tem um bloco **Download** dizendo qual usar.
 
-1. **Botão Download do Swagger.** Toda resposta JSON no Swagger tem um
+1. **Botões do painel (`/ui/`).** É o caminho recomendado: cada tela baixa
+   o que mostra, já com a chave da sessão, e percorre todas as páginas
+   sozinha.
+
+   | Tela | Botão | O que salva |
+   |---|---|---|
+   | Inspeção | **Baixar tudo (.json)** | todas as linhas da Fonte escolhida para o job ou run selecionado (exemplos, descartados, decisões, amostras, itens) |
+   | Inspeção, Fonte On-policy | **sft.jsonl**, **dpo.jsonl**, **amostras.jsonl** | os arquivos de treino e as amostras julgadas do job |
+   | Painel, Custo por etapa | **baixar .json** | tokens e custo por etapa |
+   | Painel, Datasets | **manifesto.json**, **treino.jsonl**, **held_out.jsonl** | o dataset inteiro, por versão |
+   | Painel, Runs de avaliação | **baixar** (por linha) | o run com as métricas e todos os itens com resposta e veredito, num só `.json` |
+   | Painel, Comparação pareada | **Baixar .json** | a última comparação feita |
+   | Painel, Tabela das condições | **Baixar .md** e **Baixar .json** | a tabela gerada, nos dois formatos |
+   | Anotação | **Baixar anotações (.json)** | anotações de todos os anotadores e o resumo dos kappas do run |
+
+2. **Botão Download do Swagger.** Toda resposta JSON no Swagger tem um
    botão **Download** logo abaixo do **Response body**. Serve para guardar o
    manifesto, o job, o run ou uma página de itens como `.json`.
-2. **Rotas de arquivo.** Datasets e on-policy têm rotas que devolvem o
+3. **Rotas de arquivo.** Datasets e on-policy têm rotas que devolvem o
    JSONL inteiro; o Swagger mostra um link **Download file**. Para as rotas
    paginadas (exemplos, decisões, itens), o limite é 500 por página; use
    `offset` para as páginas seguintes, ou a função abaixo.
-3. **Arquivos em disco.** A API grava tudo em `DATA_DIR` (default `data/`
+4. **Arquivos em disco.** A API grava tudo em `DATA_DIR` (default `data/`
    na raiz do projeto). É a cópia completa e serve para backup e para os
    gráficos do grupo:
 
@@ -89,7 +104,7 @@ copiado da resposta de um passo anterior. Anote todos: são reutilizados.
 | 2 | Checar saúde e provedores | Swagger / Painel | 0 | 1 |
 | 3 | Ping nos três modelos | Swagger | centavos | 2 |
 | 4 | Ingerir o corpus da LGPD | Swagger | 0 | 2 |
-| 5 | Piloto de síntese (200) e leitura pelo grupo | Swagger + Inspeção | ~0,5 USD | 4 |
+| 5 | Piloto de síntese (200, com cenários da ANPD) e leitura pelo grupo | Swagger + Inspeção | ~0,5 USD | 4 |
 | 6 | Síntese em volume (2 jobs de 2.000) | Swagger | 10 a 20 USD | 5 aprovado |
 | 7 | Filtro e leitura das reprovações | Swagger + Inspeção | 20 a 40 USD | 6 concluído |
 | 8 | Datasets (filtrado e sem filtro) e download | Swagger | 0 | 7 concluído |
@@ -286,9 +301,24 @@ Objetivo: gerar 200 exemplos e o grupo ler antes de gastar em volume.
    `status: "orcamento_excedido"` significa que o job parou no teto
    (`LLM_BUDGET_USD_POR_JOB`, default 5 USD). O que foi gerado está salvo.
 
+**Cenários da ANPD.** Cada pedido ao professor leva, além do texto da lei,
+um *cenário de inspiração* sorteado de `recursos/fontes/anpd/cenarios.jsonl`:
+169 situações fictícias extraídas de 7 guias orientativos da ANPD (agentes
+de tratamento e encarregado, atuação do encarregado, legítimo interesse,
+cookies, segurança para pequeno porte, poder público, pesquisa acadêmica),
+cada uma com guia, página e trecho de origem. O cenário só ambienta a
+pergunta: o professor continua obrigado a citar apenas dispositivos da LGPD
+que recebeu no contexto, o cenário não entra no índice BM25 e o juiz nunca
+o vê. O id do cenário usado fica em `cenario_id` em cada exemplo. Para
+gerar sem cenários (por exemplo, para comparar), mande `"com_cenarios":
+false` no corpo; a mesma `seed` sorteia os mesmos artigos nos dois casos.
+Trocar o arquivo de cenários **não** muda a `versao_do_prompt` (cenário é
+dado, não prompt), então registre o commit do arquivo junto com a versão.
+
 **No front:** tela **Inspeção** → Fonte **Síntese — exemplos** → Job
-`[ID_PILOTO]` → **Carregar**. Cada cartão mostra tipo, dificuldade,
-pergunta, raciocínio, resposta, ids citados e se as citações são válidas.
+`[ID_PILOTO]` → **Carregar**. Cada cartão mostra tipo, dificuldade, a
+etiqueta `cenário anpd-...` quando houve cenário, pergunta, raciocínio,
+resposta, ids citados e se as citações são válidas.
 Depois troque a Fonte para **Síntese — descartados** e leia os motivos.
 A tela **Painel**, bloco **Jobs**, mostra o progresso do job sem precisar
 do Swagger.
@@ -303,11 +333,16 @@ do Swagger.
 | Abstenção correta | exemplos com `tipo: "sem_resposta"` | a resposta diz que não dá para concluir e o que falta |
 | Sem dado pessoal real | `pergunta` e `resposta` | só marcadores como `[PESSOA]`, `[CPF]`, `[EMPRESA]` |
 | Cobertura de tipos e dificuldades | cabeçalho dos cartões | os 8 tipos aparecem; não é só `conceito` básico |
+| Cenário bem usado | etiqueta `cenário ...` e `pergunta` | a pergunta ambienta a situação com palavras próprias; não diz "o cenário", "o guia" nem "a ANPD"; a resposta não afirma regra que só o guia traria (isso é caso de abstenção) |
+| Cenários presentes | `cenario_id` nos cartões | preenchido na grande maioria; `null` só é esperado com `com_cenarios: false` ou em tipo sem cenário cadastrado |
 | Descartes fazem sentido | Fonte **Síntese — descartados** | duplicatas são mesmo duplicatas; vazamento do banco inicial foi pego |
 
-**Download:** para o grupo ler fora do painel (planilha, impressão), use
-o botão **Download** do Swagger em `GET /api/v1/sintese/jobs/{job_id}/exemplos`
-com `limite = 500`, ou pelo terminal:
+**Download:** para o grupo ler fora do painel (planilha, impressão), na
+tela **Inspeção** com Fonte **Síntese — exemplos** e o job `[ID_PILOTO]`
+selecionado, clique **Baixar tudo (.json)**; depois troque a Fonte para
+**Síntese — descartados** e clique de novo. Alternativas: botão
+**Download** do Swagger em `GET /api/v1/sintese/jobs/{job_id}/exemplos`
+com `limite = 500`, ou o terminal:
 
 ```powershell
 BaixarPaginado "sintese/jobs/[ID_PILOTO]/exemplos" piloto-exemplos.json
@@ -315,7 +350,10 @@ Invoke-RestMethod -Headers $H "$B/sintese/jobs/[ID_PILOTO]/descartados" | Conver
 ```
 
 Os mesmos dados estão em `data/sintese/[ID_PILOTO]/exemplos.jsonl` e
-`descartados.jsonl`; o job em `data/sintese/jobs/[ID_PILOTO].json`.
+`descartados.jsonl`; o job em `data/sintese/jobs/[ID_PILOTO].json`. O
+banco de cenários está versionado em `recursos/fontes/anpd/cenarios.jsonl`
+(o README da pasta diz de que guia e página saiu cada um); para ler o
+cenário de um exemplo, procure o `cenario_id` dele nesse arquivo.
 
 **Critério para avançar:** o grupo aprovou a amostra e registrou a
 `versao_do_prompt` que leu (está no job e em cada exemplo). Se reprovou,
@@ -362,9 +400,12 @@ definiu.
 - Leitura rápida (10 exemplos por job) na tela **Inspeção**, só para
   confirmar que a qualidade é a mesma do piloto. A `versao_do_prompt` deve
   ser a que o grupo aprovou.
+- Os dois jobs sorteiam os mesmos 169 cenários em ordens diferentes
+  (`seed`); confira que `cenario_id` aparece nos cartões dos dois.
 
-**Download:** igual ao passo 5, trocando o id:
-`BaixarPaginado "sintese/jobs/[ID_SINTESE_1]/exemplos" sintese1.json`.
+**Download:** igual ao passo 5: **Inspeção** → Fonte **Síntese —
+exemplos** → job `[ID_SINTESE_1]` → **Baixar tudo (.json)**, ou pelo
+terminal `BaixarPaginado "sintese/jobs/[ID_SINTESE_1]/exemplos" sintese1.json`.
 Em disco: `data/sintese/[ID_SINTESE_1]/exemplos.jsonl`. Guarde também o
 job (`GET /api/v1/sintese/jobs/{job_id}` → **Download**): ele tem a
 `versao_do_prompt`, o `modelo` e o `custo_usd` que vão para o TCC.
@@ -426,8 +467,11 @@ veredito completo (`correcao_juridica`, `lastro_nas_citacoes`,
 | Reprovação por tipo | `reprovacoes_por_motivo` e tipos nos cartões | `sem_resposta` não pode ter sido reprovado em massa por `abstencao_inadequada` |
 
 **Download:** as decisões completas (veredito do juiz, reamostragens,
-motivos) saem de `GET /api/v1/filtro/jobs/{job_id}/decisoes`. Pelo Swagger,
-`aprovado = false` e `limite = 500` e o botão **Download**; pelo terminal:
+motivos) saem de `GET /api/v1/filtro/jobs/{job_id}/decisoes`. No painel:
+**Inspeção** → Fonte **Filtro — reprovados** → job `[ID_FILTRO]` →
+**Baixar tudo (.json)**, e de novo com Fonte **Filtro — aprovados**. Pelo
+Swagger, `aprovado = false` e `limite = 500` e o botão **Download**; pelo
+terminal:
 
 ```powershell
 BaixarPaginado "filtro/jobs/[ID_FILTRO]/decisoes?aprovado=false" reprovadas.json
@@ -477,6 +521,7 @@ Dois datasets: o filtrado (C3) e o sem filtro (C2, controle).
    com `[VERSAO_FILTRADO]` e `split = treino`, depois `split = held_out`.
    O Swagger mostra um link **Download file**; salve como `treino.jsonl` e
    `held_out.jsonl`. Repita para `[VERSAO_SEM_FILTRO]` em outra pasta.
+   O mesmo download está no painel, bloco **Datasets** (ver abaixo).
 
    Pelo terminal, se preferir:
 
@@ -497,12 +542,13 @@ Dois datasets: o filtrado (C3) e o sem filtro (C2, controle).
 | `versoes_do_prompt_de_sintese` | só a versão que o grupo aprovou |
 | `versoes_do_filtro` | uma versão só |
 
-**No front:** não há tela de datasets. O manifesto fica no Swagger.
+**No front:** tela **Painel**, bloco **Datasets**: uma linha por versão
+com nome, total de treino e de held-out, e três botões de download.
 
-**Download:** o item 4 acima já é o download dos splits. Guarde também o
-manifesto (`GET /api/v1/datasets/{versao}` → **Download**): é o documento
-que identifica o dataset no TCC. Em disco, tudo fica em
-`data/datasets/[VERSAO]/` (`manifesto.json`, `treino.jsonl`, `held_out.jsonl`).
+**Download:** no bloco **Datasets** do Painel, clique **treino.jsonl** e
+**held_out.jsonl** na linha da versão; é o mesmo arquivo do item 4 acima.
+Clique também **manifesto.json**: é o documento que identifica o dataset
+no TCC. Em disco, tudo fica em `data/datasets/[VERSAO]/`.
 
 **Regra:** o `held_out` nunca entra em treino nem no on-policy. O split é
 por hash do id; não copie linhas entre os arquivos.
@@ -608,8 +654,10 @@ o treino.
 modelo quando você cria avaliações.
 
 **Download:** o run registrado sai de `GET /api/v1/treinos/{run_id}`
-(**Download**) ou de `GET /api/v1/treinos` para todos de uma vez. Em
-disco: `data/treinos/[ID_RUN].json`. O GGUF, o Modelfile e o `run.json`
+(**Download**) ou de `GET /api/v1/treinos` para todos de uma vez; o
+painel lista os treinos no bloco **Jobs**, mas não tem botão para eles,
+porque o conteúdo é o próprio `run.json` que você já tem. Em disco:
+`data/treinos/[ID_RUN].json`. O GGUF, o Modelfile e o `run.json`
 originais ficam na pasta de cada condição que você baixou do Colab; a API
 não os guarda.
 
@@ -698,10 +746,12 @@ noite e não reinicie a API.
 | Os erros do juiz são justos? | 10 itens com erro na Inspeção | o grupo concorda com a `justificativa` em pelo menos 8; se não, vá ao passo 13 antes de tirar conclusões |
 | Latência e custo | `latencia_p50_ms`, `custo_usd_por_item` | entram na tabela do TCC como custo do cenário on-premise |
 
-**Download:** por run, dois arquivos. O resumo com as métricas sai de
-`GET /api/v1/avaliacao/runs/{run_id}` (**Download**); os itens, com
-resposta do modelo e veredito do juiz, de
-`GET /api/v1/avaliacao/runs/{run_id}/itens` com `limite = 500`:
+**Download:** no Painel, bloco **Runs de avaliação**, o botão **baixar**
+da linha do run salva `avaliacao-<id>.json` com duas chaves: `run` (as
+métricas) e `itens` (todos os itens, com resposta do modelo e veredito do
+juiz). Pelo Swagger são dois downloads: `GET /api/v1/avaliacao/runs/{run_id}`
+e `GET /api/v1/avaliacao/runs/{run_id}/itens` com `limite = 500`. Pelo
+terminal:
 
 ```powershell
 Invoke-RestMethod -Headers $H "$B/avaliacao/runs/[AV_C3]" | ConvertTo-Json -Depth 10 | Out-File av_c3.json -Encoding utf8
@@ -789,11 +839,13 @@ Use a mesma definição da rubrica do juiz: "correto" é chegar à conclusão
 jurídica da referência; "grounded" é toda afirmação normativa ter lastro
 nos dispositivos de referência.
 
-**Download:** as anotações dos três autores saem de
+**Download:** na tela **Anotação**, bloco **Calibração do juiz neste
+run**, o botão **Baixar anotações (.json)** salva as anotações dos três
+autores e o resumo dos kappas num só arquivo. Pelo Swagger:
 `GET /api/v1/avaliacao/runs/{run_id}/anotacoes` (sem filtro de
-`anotador`, vem tudo) e o resumo dos kappas de `.../calibracao`, ambos
-pelo botão **Download**. Em disco: `data/avaliacao/[HO_C3]/anotacoes.jsonl`.
-Esse arquivo é a evidência da calibração; anexe ao TCC.
+`anotador`, vem tudo) e `.../calibracao`. Em disco:
+`data/avaliacao/[HO_C3]/anotacoes.jsonl`. Esse arquivo é a evidência da
+calibração; anexe ao TCC.
 
 ---
 
@@ -828,7 +880,9 @@ seleciona. Pré-requisito: C3 servido no Ollama (passo 10).
 3. Download: `GET /api/v1/on-policy/jobs/{job_id}/arquivo/{nome}` com
    `nome = sft` e depois `nome = dpo`. Salve como `sft.jsonl` e `dpo.jsonl`.
    Um terceiro valor, `nome = amostras`, baixa todas as amostras com o
-   veredito do juiz, para análise. Pelo terminal:
+   veredito do juiz, para análise. No painel, os três aparecem como botões
+   **sft.jsonl**, **dpo.jsonl** e **amostras.jsonl** na tela **Inspeção**
+   quando a Fonte é On-policy e o job está selecionado. Pelo terminal:
 
    ```powershell
    Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/sft" sft.jsonl
@@ -896,8 +950,12 @@ número de custo do TCC.
    **Esperado:** `por_etapa` com tokens e custo de `sintese`, `filtro`,
    `avaliacao`, `on_policy` e `diagnostico`, e o `total`.
 
-**Download:** o `.md` sai direto do Swagger (botão **Download** no
-Response body, que é texto). Para guardar tudo de uma vez pelo terminal:
+**Download:** no Painel, depois de **Gerar tabela**, os botões
+**Baixar .md** e **Baixar .json** salvam a tabela nos dois formatos; no
+bloco **Comparação pareada**, **Baixar .json** salva a última comparação;
+em **Custo por etapa**, **baixar .json** salva os custos. Pelo Swagger, o
+`.md` sai pelo botão **Download** no Response body. Para guardar tudo de
+uma vez pelo terminal:
 
 ```powershell
 $runs = "[AV_C0],[AV_C1],[AV_C6],[AV_C2],[AV_C3],[AV_C4]"
@@ -930,6 +988,7 @@ inteira para o armazenamento do grupo: é o conjunto completo de evidências.
 |---|---|
 | Versão do corpus | cabeçalho de `recursos/fontes/lgpd.txt` |
 | Versão do prompt de síntese | `versao_do_prompt` em cada exemplo e job |
+| Banco de cenários da ANPD | commit de `recursos/fontes/anpd/cenarios.jsonl`; `cenario_id` em cada exemplo |
 | Versão do filtro | `versao_do_filtro` em cada decisão |
 | Versão do dataset | `versao` do manifesto |
 | Receita de treino | `run.json` registrado em `/treinos` |

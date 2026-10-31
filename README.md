@@ -69,6 +69,14 @@ pode citar ids que recebeu, e cada id citado é conferido no corpus por
 código, não por confiança. O mesmo índice servirá à condição de controle
 "aluno com RAG sem treino" e ao rastro de embasamento do juiz.
 
+**Cenários da ANPD.** Além do contexto legal, cada pedido pode receber um
+*cenário de inspiração* sorteado de `recursos/fontes/anpd/cenarios.jsonl`:
+situações extraídas dos guias orientativos da ANPD e reescritas como casos
+fictícios, cada uma com guia, página e trecho de origem. O cenário só
+ambienta a pergunta (setor, agente, dado, situação); ele não entra no
+índice, não é citável, não vai ao juiz como rastro e fica registrado no
+exemplo como `cenario_id`. `com_cenarios: false` no job desliga.
+
 ## Requisitos
 
 - Python 3.11
@@ -115,13 +123,17 @@ uvicorn main:app --reload
   vez; ela fica só na sessão da aba. Três telas:
   - **Anotação**: calibração do juiz. Mostra pergunta, resposta, referência
     e o texto dos artigos; esconde o veredito do juiz por padrão; pula o que
-    você já anotou; mostra o kappa do run.
+    você já anotou; mostra o kappa do run; baixa as anotações e o resumo.
   - **Inspeção**: exemplos e descartes da síntese, decisões do filtro
     (aprovadas/reprovadas com motivos e reamostragens), amostras do
-    on-policy e itens com erro da avaliação, com paginação.
-  - **Painel**: saúde e provedores, custo por etapa, todos os jobs, runs de
-    avaliação com métricas e intervalo, comparação pareada e a tabela das
-    condições com rótulos, em HTML e em Markdown para o TCC.
+    on-policy e itens com erro da avaliação, com paginação e botão
+    **Baixar tudo** (todas as páginas num `.json`); para o on-policy,
+    também os arquivos `sft`, `dpo` e `amostras`.
+  - **Painel**: saúde e provedores, custo por etapa, todos os jobs,
+    datasets (com download do manifesto e dos splits), runs de avaliação
+    com métricas e intervalo (com download do run e dos itens), comparação
+    pareada e a tabela das condições com rótulos, em HTML e em Markdown
+    para o TCC, ambos com download.
   Disparar síntese, filtro e treino continua pelo Swagger ou pelo guia:
   são operações caras e raras, e ficam fora do painel de propósito.
 - Saúde: `GET /health/live` (processo vivo) e `GET /health/ready` (diz o que
@@ -323,7 +335,7 @@ app/
   ui/                  front mínimo (index.html, app.js, app.css) servido em /ui
   core/                config, auth, llm (papéis e provedores), llm_pricing, llm_usage, llm_gate, stats, observability, erros
   services/corpus/     chunking por dispositivo, parser de referências, BM25, ingestão
-  services/sintese/    taxonomia, serviço do professor (Protocol + impl), dedup, engine de jobs
+  services/sintese/    taxonomia, cenários da ANPD, serviço do professor (Protocol + impl), dedup, engine de jobs
   services/filtro/     pré-checagem de citações, reamostragem do professor, juiz com rubrica, decisão
   services/datasets/   prompt do aluno (fixo e versionado), split por hash, construtor e export JSONL
   services/treino/     registro de runs e verificação no servidor local

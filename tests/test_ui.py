@@ -46,11 +46,25 @@ def test_ui_e_publica_e_a_api_continua_protegida(client, monkeypatch):
     monkeypatch.setenv("AUTH_API_KEYS", "k")
     pagina = client.get("/ui/")
     assert pagina.status_code == 200 and "text/html" in pagina.headers["content-type"]
-    assert "Anotação" in pagina.text and 'src="app.js"' in pagina.text
-    assert client.get("/ui/app.js").status_code == 200
+    assert "Anotação" in pagina.text and 'src="app.js?v=' in pagina.text
+    js = client.get("/ui/app.js")
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"
     assert client.get("/ui/app.css").status_code == 200
+    assert pagina.headers["cache-control"] == "no-cache"
     assert client.get("/api/v1/avaliacao/runs").status_code == 401
     assert client.get("/api/v1/avaliacao/runs", headers={"X-API-Key": "k"}).status_code == 200
+
+
+def test_ui_tem_os_botoes_de_download_de_cada_etapa(client):
+    """Cada tela oferece baixar o que mostra; os ids sao o contrato entre o
+    HTML e o app.js."""
+
+    pagina = client.get("/ui/").text
+    for id_ in ("an-baixar", "in-baixar", "in-arquivos", "pa-baixar-custos", "pa-datasets", "pa-cmp-baixar", "pa-tabela-baixar-md", "pa-tabela-baixar-json"):
+        assert f'id="{id_}"' in pagina, id_
+    js = client.get("/ui/app.js").text
+    for id_ in ("an-baixar", "in-baixar", "pa-baixar-custos", "pa-datasets", "pa-cmp-baixar", "pa-tabela-baixar-md", "pa-tabela-baixar-json", "pa-baixar-run", "pa-ds"):
+        assert id_ in js, id_
 
 
 def test_raiz_redireciona_para_a_ui(client):
