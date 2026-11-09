@@ -45,6 +45,11 @@ class ParametrosDeFiltro(BaseModel):
     tamanho_do_lote: int = Field(default=5, ge=1, le=20)
     concorrencia: int = Field(default=3, ge=1, le=12)
     teto_usd: float | None = Field(default=None, ge=0)
+    pular_decididos_em: list[str] = Field(
+        default_factory=list,
+        description="Jobs de filtro cujas decisoes ja valem: esses exemplos nao sao reavaliados (retomar um job "
+        "interrompido). Decisao 'juiz_nao_avaliou' nao conta e o exemplo volta a ser avaliado.",
+    )
 
 
 class VereditoDeQualidade(BaseModel):
@@ -91,6 +96,7 @@ class JobDeFiltro(BaseModel):
     criado_em: dt.datetime
     atualizado_em: dt.datetime
     exemplos: int = 0
+    ja_decididos: int = Field(default=0, description="Exemplos pulados por ja terem decisao em pular_decididos_em")
     reprovados_sem_llm: int = 0
     lotes: int = 0
     lotes_concluidos: int = 0

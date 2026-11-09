@@ -197,6 +197,24 @@ class TestEngine:
         )
         assert job.exemplos == 2
 
+    async def test_retoma_pulando_os_ja_decididos(self, corpus, repos):
+        sintese, filtro = repos
+        _job_de_sintese(sintese, "s1", [exemplo("a"), exemplo("b"), exemplo("c")])
+        servico = ServicoDuble()
+        primeiro = novo_job(F.ParametrosDeFiltro(jobs_de_sintese=["s1"], k_reamostragens=0, teto_usd=0))
+        filtro.salvar_job(primeiro)
+        engine = FiltroDeQualidade(servico, corpus, filtro, sintese)
+        # Simula o job interrompido: "a" decidido; "b" so' com falha do juiz.
+        engine._registrar(primeiro, exemplo("a"), aprovado=True, motivos=[], veredito=None, reamostragens=[], score=None)
+        engine._registrar(primeiro, exemplo("b"), aprovado=False, motivos=[F.MOTIVO_JUIZ_INDISPONIVEL], veredito=None, reamostragens=[], score=None)
+
+        job = await engine.executar(novo_job(F.ParametrosDeFiltro(
+            jobs_de_sintese=["s1"], k_reamostragens=0, teto_usd=0, pular_decididos_em=[primeiro.id],
+        )))
+        assert job.ja_decididos == 1 and job.exemplos == 2
+        assert sorted(c.pergunta for c in servico.casos_julgados) == [exemplo("b").pergunta, exemplo("c").pergunta]
+        assert sorted(d.exemplo_id for d in filtro.decisoes(job.id)) == ["b", "c"]
+
     async def test_lote_com_erro(self, corpus, repos):
         sintese, filtro = repos
         _job_de_sintese(sintese, "s1", [exemplo("a")])
@@ -240,6 +258,10 @@ class TestEndpoints:
 
     def test_job_de_sintese_inexistente(self, client):
         assert client.post("/api/v1/filtro/jobs", json={"jobs_de_sintese": ["nao-existe"]}).status_code == 404
+
+    def test_job_de_filtro_a_pular_inexistente(self, client):
+        r = client.post("/api/v1/filtro/jobs", json={"jobs_de_sintese": ["s1"], "pular_decididos_em": ["nao-existe"]})
+        assert r.status_code == 404 and "filtro" in r.json()["detail"]
 
     def test_parametros_invalidos(self, client):
         assert client.post("/api/v1/filtro/jobs", json={"jobs_de_sintese": []}).status_code == 422

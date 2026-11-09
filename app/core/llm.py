@@ -130,8 +130,9 @@ _MODELOS_QUE_COBRAM_ESCRITA_DE_CACHE = frozenset({"gpt-5.6-luna"})
 # Modelo de raciocinio da OpenAI: o pensamento sai do MESMO teto de saida.
 # Reserva somada ao `max_tokens` para o pedido do call site continuar sendo
 # uma promessa sobre a RESPOSTA. Medido: taxonomias truncadas com 2.048 tokens
-# todos de raciocinio; 8.192 cobre com folga.
-_RESERVA_DE_RACIOCINIO: dict[str, int] = {"gpt-5.6-luna": 8192}
+# todos de raciocinio; 8.192 cobre com folga. gpt-6-luna: reamostragem do
+# filtro truncada com 8.192 tokens, todos de raciocinio (2026-11).
+_RESERVA_DE_RACIOCINIO: dict[str, int] = {"gpt-5.6-luna": 8192, "gpt-6-luna": 8192}
 
 _avisados_sem_temperatura: set[str] = set()
 

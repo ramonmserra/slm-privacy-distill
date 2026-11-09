@@ -32,6 +32,9 @@ async def criar_job(parametros: ParametrosDeFiltro) -> JobDeFiltro:
     for job_sintese in parametros.jobs_de_sintese:
         if _sintese.carregar_job(job_sintese) is None:
             raise HTTPException(status_code=404, detail=f"Job de sintese {job_sintese!r} nao existe.")
+    for job_filtro in parametros.pular_decididos_em:
+        if _repositorio.carregar_job(job_filtro) is None:
+            raise HTTPException(status_code=404, detail=f"Job de filtro {job_filtro!r} nao existe.")
     job = novo_job(parametros)
     _repositorio.salvar_job(job)
     engine = FiltroDeQualidade(servico_de_filtro(parametros.temperatura_de_reamostragem), corpus, _repositorio, _sintese)

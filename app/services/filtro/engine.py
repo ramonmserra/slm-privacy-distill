@@ -130,6 +130,17 @@ class FiltroDeQualidade:
                     exemplos.append(e)
         return exemplos
 
+    def _ja_decididos(self, jobs_de_filtro: list[str]) -> set[str]:
+        """Ids com decisao valida nesses jobs. 'juiz_nao_avaliou' nao e'
+        decisao sobre o exemplo, e' falha do juiz: o exemplo volta a fila."""
+
+        return {
+            d.exemplo_id
+            for j in jobs_de_filtro
+            for d in self._repositorio.decisoes(j)
+            if MOTIVO_JUIZ_INDISPONIVEL not in d.motivos
+        }
+
     def _contexto_dos_citados(self, exemplo: ExemploSintetico) -> list[TrechoDeContexto]:
         artigos: list[str] = []
         for id_ in exemplo.artigos_citados:
@@ -141,6 +152,9 @@ class FiltroDeQualidade:
     async def executar(self, job: JobDeFiltro) -> JobDeFiltro:
         params = job.parametros
         exemplos = self._carregar_exemplos(params.jobs_de_sintese)
+        decididos = self._ja_decididos(params.pular_decididos_em)
+        job.ja_decididos = sum(1 for e in exemplos if e.id in decididos)
+        exemplos = [e for e in exemplos if e.id not in decididos]
         job.exemplos = len(exemplos)
         job.status = StatusDoJob.EXECUTANDO
         job.modelo_juiz = getattr(self._servico, "modelo_juiz", "")
