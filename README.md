@@ -65,11 +65,22 @@ em `GET /api/v1/usage/providers` quando coincidem.
 é quebrada em dispositivos com id canônico (`LGPD:art.7:inc.IX`) e indexada
 por BM25. Para cada exemplo pedido, o gerador recupera o artigo-alvo, os
 artigos-âncora do tipo de tarefa (as definições do art. 5º para classificar
-dado, as hipóteses do art. 7º para base legal...) e os artigos relacionados
-e os entrega ao professor como contexto; o professor só
+dado, as hipóteses do art. 7º para base legal...), as remissões do próprio
+alvo (art. 44 remete ao 46) e os artigos relacionados e os entrega ao
+professor como contexto; o professor só
 pode citar ids que recebeu, e cada id citado é conferido no corpus por
 código, não por confiança. O mesmo índice servirá à condição de controle
 "aluno com RAG sem treino" e ao rastro de embasamento do juiz.
+
+**Regulamento de Dosimetria.** A LGPD delega à ANPD a dosimetria das
+sanções (arts. 52 a 54); perguntas sobre gravidade da infração, multa,
+agravantes e atenuantes não têm resposta no texto da lei. Por isso o
+Regulamento de Dosimetria e Aplicação de Sanções Administrativas (Resolução
+CD/ANPD 4/2023, `recursos/fontes/dosimetria_anpd.txt`) entra no corpus como
+fonte *complementar*: mesmo chunking, mesma verificação de citação, prefixo
+`DOSIMETRIA:`. A síntese continua sorteando alvos só da lei; o Regulamento
+entra no contexto por remissão ou BM25. Os Apêndices (tabelas de valores)
+são imagens no DOU e não foram transcritos.
 
 **Cenários da ANPD.** Além do contexto legal, cada pedido pode receber um
 *cenário de inspiração* sorteado de `recursos/fontes/anpd/cenarios.jsonl`:
@@ -192,9 +203,15 @@ Para a **Etapa 1** (corpus e síntese):
    ```powershell
    python -m scripts.baixar_lgpd
    ```
+   O Regulamento de Dosimetria da ANPD está em
+   `recursos/fontes/dosimetria_anpd.txt`; para rebaixar do DOU:
+   ```powershell
+   python -m scripts.baixar_dosimetria
+   ```
 2. **Ingerir e consultar o corpus** (não gasta nada):
    ```powershell
    curl -X POST -H "X-API-Key: SUA_CHAVE" -H "Content-Type: application/json" -d "{\"fonte\":\"LGPD\"}" http://localhost:8000/api/v1/corpus/ingerir
+   curl -X POST -H "X-API-Key: SUA_CHAVE" -H "Content-Type: application/json" -d "{\"fonte\":\"DOSIMETRIA\"}" http://localhost:8000/api/v1/corpus/ingerir
    curl -H "X-API-Key: SUA_CHAVE" "http://localhost:8000/api/v1/corpus/dispositivos/LGPD:art.7:inc.IX"
    curl -H "X-API-Key: SUA_CHAVE" "http://localhost:8000/api/v1/corpus/buscar?q=incidente%20de%20seguranca&k=3"
    ```
@@ -392,3 +409,4 @@ data/                  saída de runtime (fora do git)
 | [`docs/GUIA_DE_EXECUCAO.md`](docs/GUIA_DE_EXECUCAO.md) | Passo a passo para rodar a pesquisa inteira, etapa por etapa, com pontos de verificação |
 | [`recursos/avaliacao/banco_inicial_lgpd.jsonl`](recursos/avaliacao/banco_inicial_lgpd.jsonl) | 34 perguntas de avaliação com artigos de referência e critérios esperados |
 | [`recursos/fontes/lgpd.txt`](recursos/fontes/lgpd.txt) | Texto consolidado da LGPD, limpo e versionado (fonte e data no cabeçalho) |
+| [`recursos/fontes/dosimetria_anpd.txt`](recursos/fontes/dosimetria_anpd.txt) | Regulamento de Dosimetria da ANPD (Resolução CD/ANPD 4/2023), fonte complementar do corpus |

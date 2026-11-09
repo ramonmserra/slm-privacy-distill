@@ -1,7 +1,8 @@
 """Corpus juridico: ingestao da fonte versionada, consulta por id e busca.
 
 - `POST /corpus/ingerir` le `recursos/fontes/<fonte>.txt`, chunka por
-  dispositivo e persiste. Idempotente: ingerir de novo substitui.
+  dispositivo e persiste. Idempotente: ingerir de novo substitui. Ingerir
+  um complemento (`DOSIMETRIA`) faz o corpus ativo recarregar com ele.
 - `GET /corpus` resume o corpus ativo.
 - `GET /corpus/dispositivos/{id}` devolve um dispositivo e o artigo inteiro.
 - `GET /corpus/buscar?q=` e' o retrieval (BM25) que a sintese usa.
@@ -41,7 +42,9 @@ async def ingerir(pedido: PedidoDeIngestao) -> ResumoDoCorpus:
         raise HTTPException(status_code=409, detail=str(exc))
     except ingestao.CorpusInvalido as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    ingestao.registro.definir(corpus)
+    # Recarrega do disco na proxima leitura: assim LGPD + complementos ja
+    # ingeridos voltam juntos, qualquer que seja a ordem das ingestoes.
+    ingestao.registro.limpar()
     return corpus.resumo()
 
 

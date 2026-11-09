@@ -119,6 +119,16 @@ class TestBuildChatModel:
         llm.build_chat_model("anthropic:claude-sonnet-5", max_tokens=10, temperature=0.0)
         assert "temperature" not in init_capturado[0]
 
+    def test_sonnet_5_5_descarta_temperature(self, init_capturado, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-y")
+        llm.build_chat_model("anthropic:claude-sonnet-5-5", max_tokens=10, temperature=0.0)
+        assert "temperature" not in init_capturado[0]
+
+    def test_gpt6_luna_descarta_temperature(self, init_capturado, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+        llm.build_chat_model("openai:gpt-6-luna", max_tokens=10, temperature=0.0)
+        assert "temperature" not in init_capturado[0]
+
     def test_kwarg_none_e_omitido(self, init_capturado, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
         llm.build_chat_model("openai:gpt-5-nano", max_tokens=10, temperature=None)

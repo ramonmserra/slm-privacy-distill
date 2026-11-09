@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.core import llm_pricing
 from app.core.llm_usage import LlmUsageTracker, etapa_scope, job_scope, record_langchain_usage, tracker
 from app.schemas.comum import Etapa
@@ -16,6 +18,22 @@ class TestPricing:
             cache_creation_input_tokens=1_000_000, cache_read_input_tokens=1_000_000,
         )
         assert custo == 0.20 + 1.20 + 0.25 + 0.02
+
+    def test_gpt6_luna_por_contador_e_nao_conferido(self):
+        custo = llm_pricing.estimate_cost_usd(
+            "openai:gpt-6-luna", input_tokens=1_000_000, output_tokens=1_000_000,
+            cache_creation_input_tokens=1_000_000, cache_read_input_tokens=1_000_000,
+        )
+        assert custo == pytest.approx(0.10 + 0.50 + 0.125 + 0.01)
+        assert not llm_pricing.is_verified("openai:gpt-6-luna")
+
+    def test_sonnet_5_5_por_contador_e_conferido(self):
+        custo = llm_pricing.estimate_cost_usd(
+            "anthropic:claude-sonnet-5-5", input_tokens=1_000_000, output_tokens=1_000_000,
+            cache_creation_input_tokens=1_000_000, cache_read_input_tokens=1_000_000,
+        )
+        assert custo == pytest.approx(2.00 + 10.00 + 2.50 + 0.20)
+        assert llm_pricing.is_verified("anthropic:claude-sonnet-5-5")
 
     def test_anthropic_deriva_cache_dos_multiplicadores(self):
         custo = llm_pricing.estimate_cost_usd(

@@ -5,6 +5,8 @@
 - `GET /relatorios/pareadas?referencia=a&candidatos=b,c`: cada candidato
   contra a referencia, item a item.
 - `GET /relatorios/custos`: tokens e custo por etapa do pipeline.
+- `GET /relatorios/cobertura?jobs=a,b`: quanto de cada artigo da lei os
+  exemplos aceitos da sintese cobrem; `.md` devolve Markdown.
 """
 
 from __future__ import annotations
@@ -12,14 +14,17 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
+from app.api.v1.endpoints.corpus import corpus_ativo
 from app.core.llm_usage import tracker
 from app.repositories.avaliacao_repository import AvaliacaoRepository
+from app.repositories.sintese_repository import SinteseRepository
 from app.schemas.avaliacao import ComparacaoPareada, RunDeAvaliacao
 from app.services.avaliacao import pareado
-from app.services.relatorios import condicoes
+from app.services.relatorios import cobertura, condicoes
 
 router = APIRouter()
 _avaliacao = AvaliacaoRepository()
+_sintese = SinteseRepository()
 
 
 def _runs(ids: str) -> list[RunDeAvaliacao]:
@@ -69,3 +74,27 @@ async def custos() -> dict:
         "modelos_sem_preco": snap["modelos_sem_preco"],
         "aviso": snap["aviso"],
     }
+
+
+def _cobertura(jobs: str, fonte: str) -> cobertura.RelatorioDeCobertura:
+    ids = [i.strip() for i in jobs.split(",") if i.strip()]
+    if not ids:
+        raise HTTPException(status_code=422, detail="informe ao menos um job de sintese")
+    for job_id in ids:
+        if _sintese.carregar_job(job_id) is None:
+            raise HTTPException(status_code=404, detail=f"Job de sintese {job_id!r} nao existe.")
+    corpus = corpus_ativo(fonte)
+    artigos = [a.id for a in corpus.artigos(corpus.fonte)]
+    exemplos = [e for j in ids for e in _sintese.exemplos(j)]
+    descartados = [d for j in ids for d in _sintese.descartados(j)]
+    return cobertura.relatorio(artigos, exemplos, descartados, ids)
+
+
+@router.get("/cobertura", response_model=cobertura.RelatorioDeCobertura)
+async def cobertura_da_lei(jobs: str = Query(description="ids de jobs de sintese separados por virgula"), fonte: str = Query(default="LGPD")) -> cobertura.RelatorioDeCobertura:
+    return _cobertura(jobs, fonte)
+
+
+@router.get("/cobertura.md", response_class=PlainTextResponse)
+async def cobertura_da_lei_markdown(jobs: str = Query(), fonte: str = Query(default="LGPD")) -> str:
+    return cobertura.markdown(_cobertura(jobs, fonte))

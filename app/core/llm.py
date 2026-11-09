@@ -116,7 +116,9 @@ _LOCAL_BASE_URL_DEFAULT = "http://localhost:11434/v1"
 # comportamento silencioso.
 
 # Recusa `temperature` (400): o parametro sai do payload, com aviso.
-_MODELOS_SEM_TEMPERATURE = frozenset({"claude-sonnet-5"})
+# gpt-6-luna: 400 "Only the default (1) value is supported" (2026-11).
+# claude-sonnet-5-5: documentado pela Anthropic, valor nao-default = 400.
+_MODELOS_SEM_TEMPERATURE = frozenset({"claude-sonnet-5", "claude-sonnet-5-5", "gpt-6-luna"})
 
 # So' aceita ferramenta e preserva `usage_metadata` pela Responses API.
 _MODELOS_SO_COM_RESPONSES_API = frozenset({"gpt-5.6-luna"})

@@ -34,7 +34,8 @@ class Dispositivo(BaseModel):
 
 
 class ResumoDoCorpus(BaseModel):
-    fonte: str
+    fonte: str = Field(description="Fonte principal, de onde a sintese sorteia os artigos-alvo")
+    fontes: list[str] = Field(default_factory=list, description="Principal + complementos carregados (ex.: LGPD, DOSIMETRIA)")
     dispositivos: int
     artigos: int
     paragrafos: int

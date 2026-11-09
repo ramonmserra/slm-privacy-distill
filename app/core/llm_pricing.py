@@ -66,12 +66,21 @@ _PRECO_LOCAL = ModelPricing(input=0.0, output=0.0, cache_write=0.0, cache_read=0
 _PRICING: dict[str, ModelPricing] = {
     "anthropic:claude-haiku-4-5": ModelPricing(input=1.00, output=5.00),
     "anthropic:claude-sonnet-5": ModelPricing(input=3.00, output=15.00),
+    # Conferido em 2026-11 na referencia da Anthropic: cache deriva dos
+    # multiplicadores (escrita 2,50; leitura 0,20).
+    "anthropic:claude-sonnet-5-5": ModelPricing(input=2.00, output=10.00),
     "anthropic:claude-opus-4-5": ModelPricing(input=5.00, output=25.00),
     # Familia 5.6 COBRA a escrita de cache (1,25x o input). Tarifa de contexto
     # curto: acima de 272K tokens de entrada a requisicao inteira sai a 2x/1,5x
     # e esta tabela subestima -- os lotes deste projeto ficam longe disso.
     "openai:gpt-5.6-luna": ModelPricing(
         input=0.20, output=1.20, cache_write=0.25, cache_read=0.02, verified=True
+    ),
+    # Fontes de terceiros (2026-11), nao a pagina da OpenAI: por isso
+    # verified=False. Escrita de cache tem valor divergente entre fontes;
+    # fica o maior (0,125) para nao subestimar.
+    "openai:gpt-6-luna": ModelPricing(
+        input=0.10, output=0.50, cache_write=0.125, cache_read=0.01, verified=False
     ),
     "openai:gpt-5": ModelPricing(input=1.25, output=10.00, cache_write=0.0, cache_read=0.125, verified=False),
     "openai:gpt-5-mini": ModelPricing(input=0.25, output=2.00, cache_write=0.0, cache_read=0.025, verified=False),

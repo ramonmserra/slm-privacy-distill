@@ -45,6 +45,7 @@ class ExemploSintetico(BaseModel):
     artigos_citados_invalidos: list[str] = Field(default_factory=list, description="Ids que nao existem no corpus")
     citacoes_validas: bool
     contexto_ids: list[str] = Field(description="Dispositivos entregues ao professor como contexto")
+    alvo_id: str | None = Field(default=None, description="Artigo sorteado para o pedido; None em exemplos gravados antes do campo existir")
     cenario_id: str | None = Field(default=None, description="Cenario de inspiracao (guias da ANPD) anexado ao pedido; None quando o job rodou sem cenarios ou o tipo nao tinha cenario")
     modelo: str
     versao_do_prompt: str
@@ -57,6 +58,7 @@ class ExemploDescartado(BaseModel):
     pergunta: str
     tipo: TipoDeTarefa | None = None
     detalhe: str = ""
+    alvo_id: str | None = Field(default=None, description="Artigo sorteado para o pedido; None se o indice nao casou com pedido algum")
 
 
 class StatusDoJob(StrEnum):

@@ -7,7 +7,11 @@ O que e' DETERMINISTICO aqui (e por isso mora no engine, nao no prompt):
   mesma seed, mesmo plano, mesma cobertura;
 - o CONTEXTO (RAG): artigo-alvo + artigos-ancora do tipo de tarefa (ver
   `taxonomia`: as definicoes para classificar dado, as hipoteses legais
-  para base legal...) + artigos relacionados por BM25;
+  para base legal...) + REMISSOES do alvo (os artigos que o texto dele
+  cita: art. 44 remete ao 46, art. 42 ao 43) + artigos relacionados por
+  BM25. O alvo e' sempre da fonte principal (a lei); dispositivos de
+  fonte complementar (Regulamento de Dosimetria) entram por remissao ou
+  BM25 e sao citaveis como qualquer outro;
 - o CENARIO de inspiracao (guias da ANPD): sorteado por tipo com seed
   derivada da seed do job; ambienta a pergunta e nunca vira citacao;
 - a VERIFICACAO de citacoes: todo id citado e' normalizado e conferido no
@@ -44,7 +48,7 @@ from app.schemas.sintese import (
     TipoDeTarefa,
 )
 from app.services.corpus.ingestao import Corpus
-from app.services.corpus.referencias import artigo_de, normalizar_referencias
+from app.services.corpus.referencias import artigo_de, artigos_mencionados, normalizar_referencias
 from app.services.injecao import marca_de_injecao
 from app.services.lotes import ExecutorDeLotes, dividir
 from app.services.sintese.cenarios import Cenario, SorteioDeCenarios, carregar_cenarios
@@ -61,6 +65,7 @@ from app.services.sintese.llm_service import (
 logger = logging.getLogger(__name__)
 
 RELACIONADOS_POR_PEDIDO = 2
+REMISSOES_POR_PEDIDO = 3
 PERGUNTA_MINIMA_CHARS = 20
 
 MOTIVO_INDICE_DESCONHECIDO = "indice_desconhecido"
@@ -123,7 +128,7 @@ class GeradorDeSintese:
 
         rng = random.Random(parametros.seed)
         sorteio = SorteioDeCenarios(self._cenarios, random.Random(f"{parametros.seed}:cenarios")) if parametros.com_cenarios else None
-        artigos = self._corpus.artigos()
+        artigos = self._corpus.artigos(self._corpus.fonte)
         if not artigos:
             return []
         fila: list = []
@@ -146,16 +151,19 @@ class GeradorDeSintese:
         return pedidos
 
     def _contexto(self, alvo_id: str, tipo: TipoDeTarefa) -> list[TrechoDeContexto]:
-        """Alvo primeiro, depois as ancoras do tipo (se existem no corpus),
-        depois os relacionados por BM25; sem repetir dispositivo. A ancora
-        vem antes do relacionado porque e' ela que a tarefa exige; o
-        relacionado e' o que o indice achou parecido."""
+        """Alvo primeiro; depois as ancoras do tipo, as remissoes do alvo (os
+        artigos que o proprio texto dele cita: 'observado o art. 46') e os
+        relacionados por BM25; sem repetir e so' o que existe no corpus.
+        Ancora e remissao vem antes do relacionado porque sao o que a tarefa
+        e a lei exigem; o relacionado e' o que o indice achou parecido."""
 
         ids = [alvo_id]
-        candidatos = [a for a in TAXONOMIA[tipo].ancoras if self._corpus.existe(a)]
+        texto_do_alvo = self._corpus.texto_do_artigo(alvo_id)
+        candidatos = list(TAXONOMIA[tipo].ancoras)
+        candidatos += artigos_mencionados(texto_do_alvo, fonte=self._corpus.fonte)[:REMISSOES_POR_PEDIDO]
         candidatos += [r.id for r in self._corpus.relacionados(alvo_id, k=RELACIONADOS_POR_PEDIDO)]
         for id_ in candidatos:
-            if id_ not in ids:
+            if id_ not in ids and self._corpus.existe(id_):
                 ids.append(id_)
         return [TrechoDeContexto(id=i, texto=self._corpus.texto_do_artigo(i)) for i in ids]
 
@@ -226,6 +234,7 @@ class GeradorDeSintese:
                 descartados.append(ExemploDescartado(
                     job_id=job.id, motivo=motivo[0], pergunta=g.pergunta,
                     tipo=pedido.tipo if pedido else None, detalhe=motivo[1],
+                    alvo_id=pedido.alvo_id if pedido else None,
                 ))
                 continue
             dedup.adicionar(g.pergunta, ORIGEM_JOB)
@@ -234,7 +243,7 @@ class GeradorDeSintese:
                 pergunta=g.pergunta.strip(), raciocinio=g.raciocinio.strip(), resposta=g.resposta.strip(),
                 artigos_citados=validos, artigos_citados_invalidos=invalidos,
                 citacoes_validas=not invalidos and (bool(validos) or pedido.tipo == TipoDeTarefa.SEM_RESPOSTA),
-                contexto_ids=[t.id for t in pedido.contexto], cenario_id=pedido.cenario.id if pedido.cenario else None,
+                contexto_ids=[t.id for t in pedido.contexto], alvo_id=pedido.alvo_id, cenario_id=pedido.cenario.id if pedido.cenario else None,
                 modelo=job.modelo,
                 versao_do_prompt=VERSAO_DO_PROMPT, criado_em=_agora(),
             ))

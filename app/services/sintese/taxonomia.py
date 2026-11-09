@@ -7,7 +7,9 @@ descrito em linguagem natural; o `TipoDeTarefa` e' o token.
 As `ancoras` sao os artigos que o tipo exige no contexto alem do alvo
 sorteado: classificar um dado sem a definicao legal em contexto, ou pedir
 a base legal sem o rol de hipoteses, so' produz abstencao ('o texto nao
-traz a definicao') ou citacao de memoria -- os dois erros do piloto. A
+traz a definicao') ou citacao de memoria -- os dois erros do piloto. O
+art. 5 (definicoes) entra em quase todos os tipos porque foi o artigo que o
+professor mais citou sem ter recebido (11 dos 15 descartes do 2o piloto). A
 ancora entra no contexto (e em `contexto_ids`) como qualquer outro
 dispositivo; o tipo `sem_resposta` nao tem ancora porque a lacuna e' o
 objeto do exemplo.
@@ -43,7 +45,7 @@ TAXONOMIA: dict[TipoDeTarefa, DescricaoDaTarefa] = {
         "Descreva uma operacao de tratamento de dados concreta (quem trata, que dado, para que fim) e "
         "pergunte qual hipotese legal a autoriza; a resposta identifica a(s) base(s) aplicavel(is), "
         "descarta as que nao servem e explica por que.",
-        ancoras=("LGPD:art.7", "LGPD:art.11",),
+        ancoras=("LGPD:art.5", "LGPD:art.7", "LGPD:art.11",),
     ),
     TipoDeTarefa.ANALISE_DE_CASO: DescricaoDaTarefa(
         TipoDeTarefa.ANALISE_DE_CASO,
@@ -51,7 +53,7 @@ TAXONOMIA: dict[TipoDeTarefa, DescricaoDaTarefa] = {
         "Narre um caso pratico com uma afirmacao ou pratica de uma organizacao e pergunte se ela e' "
         "compativel com a lei; a resposta analisa o caso contra o dispositivo, aponta o que falta ou "
         "excede e evita conclusao absoluta onde a lei preve condicoes e excecoes.",
-        ancoras=("LGPD:art.6", "LGPD:art.7",),
+        ancoras=("LGPD:art.5", "LGPD:art.6", "LGPD:art.7",),
     ),
     TipoDeTarefa.DEVERES_DOS_AGENTES: DescricaoDaTarefa(
         TipoDeTarefa.DEVERES_DOS_AGENTES,
@@ -67,7 +69,7 @@ TAXONOMIA: dict[TipoDeTarefa, DescricaoDaTarefa] = {
         "Descreva um pedido feito por um titular (acesso, correcao, eliminacao, revisao, portabilidade) "
         "e pergunte como o controlador deve proceder; a resposta identifica o direito, o prazo ou a "
         "forma previstos e as hipoteses em que o pedido pode ser recusado ou limitado.",
-        ancoras=("LGPD:art.18",),
+        ancoras=("LGPD:art.5", "LGPD:art.18",),
     ),
     TipoDeTarefa.INCIDENTE: DescricaoDaTarefa(
         TipoDeTarefa.INCIDENTE,

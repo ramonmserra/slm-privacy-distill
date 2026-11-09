@@ -5,6 +5,12 @@ indice BM25 -- a unica estrutura que sintese, filtro e avaliacao consultam.
 `DATA_DIR/corpus/<fonte>.jsonl`; `carregar` le o que foi persistido. A API
 mantem um `Corpus` por processo (`corpus_ativo`), carregado na primeira
 leitura.
+
+Um corpus tem uma fonte PRINCIPAL (a lei, de onde a sintese sorteia os
+artigos-alvo) e pode ter COMPLEMENTOS ja ingeridos (normas que a lei delega
+a' ANPD, hoje o Regulamento de Dosimetria). Os ids levam o prefixo da
+fonte, entao nao colidem; busca, remissao e verificacao de citacao enxergam
+tudo junto, e o complemento e' tao citavel quanto a lei.
 """
 
 from __future__ import annotations
@@ -24,7 +30,11 @@ logger = logging.getLogger(__name__)
 
 FONTES_VERSIONADAS: dict[str, Path] = {
     "LGPD": Path("recursos/fontes/lgpd.txt"),
+    "DOSIMETRIA": Path("recursos/fontes/dosimetria_anpd.txt"),
 }
+# Fonte principal -> complementos carregados junto quando ja ingeridos. Um
+# complemento ausente nao e' erro: o corpus fica so' com a lei.
+COMPLEMENTOS: dict[str, tuple[str, ...]] = {"LGPD": ("DOSIMETRIA",)}
 
 
 class FonteDesconhecida(ValueError):
@@ -45,7 +55,11 @@ class Corpus:
     def __init__(self, fonte: str, dispositivos: list[Dispositivo], caminho: Path) -> None:
         self.fonte = fonte
         self.caminho = caminho
-        self._dispositivos = sorted(dispositivos, key=lambda d: d.ordem)
+        # Principal primeiro, depois cada complemento na ordem do proprio texto:
+        # a ordem dos artigos da lei nao muda quando um complemento entra, e o
+        # plano da sintese (seed) continua o mesmo.
+        self._dispositivos = sorted(dispositivos, key=lambda d: (d.fonte != fonte, d.ordem))
+        self.fontes = [fonte] + sorted({d.fonte for d in dispositivos} - {fonte})
         vistos: set[str] = set()
         duplicados = sorted({d.id for d in self._dispositivos if d.id in vistos or vistos.add(d.id)})
         if duplicados:
@@ -67,8 +81,13 @@ class Corpus:
     def dispositivo(self, id_: str) -> Dispositivo | None:
         return self._por_id.get(id_)
 
-    def artigos(self) -> list[Dispositivo]:
-        return [d for d in self._dispositivos if d.tipo == TipoDeDispositivo.ARTIGO]
+    def artigos(self, fonte: str | None = None) -> list[Dispositivo]:
+        """Artigos de todas as fontes, ou so' de uma (`fonte`)."""
+
+        return [
+            d for d in self._dispositivos
+            if d.tipo == TipoDeDispositivo.ARTIGO and (fonte is None or d.fonte == fonte)
+        ]
 
     def ids(self) -> list[str]:
         return [d.id for d in self._dispositivos]
@@ -96,6 +115,7 @@ class Corpus:
             contagem[d.tipo] += 1
         return ResumoDoCorpus(
             fonte=self.fonte,
+            fontes=self.fontes,
             dispositivos=len(self._dispositivos),
             artigos=contagem[TipoDeDispositivo.ARTIGO],
             paragrafos=contagem[TipoDeDispositivo.PARAGRAFO],
@@ -153,6 +173,8 @@ class _Registro:
                 dispositivos = repositorio.carregar(fonte.upper())
                 if not dispositivos:
                     raise CorpusVazio(f"Corpus {fonte.upper()} nao ingerido. Chame POST /corpus/ingerir.")
+                for complemento in COMPLEMENTOS.get(fonte.upper(), ()):
+                    dispositivos += repositorio.carregar(complemento)
                 self._corpus = Corpus(fonte.upper(), dispositivos, repositorio.caminho(fonte.upper()))
             return self._corpus
 

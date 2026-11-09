@@ -20,6 +20,7 @@ from app.repositories.sintese_repository import SinteseRepository
 from app.schemas.sintese import Dificuldade, ParametrosDeSintese, StatusDoJob, TipoDeTarefa
 from app.services.corpus import ingestao
 from app.services.corpus.chunking import chunkar
+from app.services.corpus.referencias import artigos_mencionados
 from app.services.injecao import marca_de_injecao
 from app.services.sintese import gerador as gerador_mod
 from app.services.sintese.cenarios import Cenario, CenariosInvalidos, SorteioDeCenarios, carregar_cenarios
@@ -35,7 +36,7 @@ from app.services.sintese.llm_service import (
 from app.services.sintese.taxonomia import TAXONOMIA
 
 _LEI = """
-Art. 1º Esta Lei dispõe sobre o tratamento de dados pessoais para proteger a privacidade.
+Art. 1º Esta Lei dispõe sobre o tratamento de dados pessoais para proteger a privacidade, observado o art. 48.
 Art. 5º Para os fins desta Lei, considera-se:
 I - dado pessoal: informação relacionada a pessoa natural identificada ou identificável;
 II - dado pessoal sensível: dado sobre origem racial, convicção religiosa, saúde ou vida sexual;
@@ -153,6 +154,9 @@ class TestExecucao:
         assert len(exemplos) == 5
         assert all(e.citacoes_validas for e in exemplos)
         assert all(e.contexto_ids[0] == e.artigos_citados[0] for e in exemplos)
+        # O alvo do plano fica gravado: e' o que o relatorio de cobertura le.
+        assert all(e.alvo_id == e.contexto_ids[0] for e in exemplos)
+        assert sorted(e.alvo_id for e in exemplos) == sorted(a.id for a in corpus.artigos())
         assert repositorio.carregar_job(job.id).status == StatusDoJob.CONCLUIDO
         # O professor recebeu indices LOCAIS (1..tamanho_do_lote) em cada lote.
         assert [p.indice for p in servico.lotes[0]] == [1, 2, 3, 4]
@@ -408,11 +412,32 @@ class TestAncorasEContexto:
             # Ancora que o corpus nao tem (art. 11 e 12 no corpus de teste) e' pulada, nao inventada.
             assert not {"LGPD:art.11", "LGPD:art.12"} & set(ids)
 
-    def test_sem_resposta_nao_tem_ancora(self, corpus, repositorio):
+    def test_sem_resposta_leva_so_alvo_remissoes_e_relacionados(self, corpus, repositorio):
         g = GeradorDeSintese(ServicoDuble(), corpus, repositorio, banco_inicial=[])
-        p = g.planejar(ParametrosDeSintese(quantidade=1, seed=1, tipos=[TipoDeTarefa.SEM_RESPOSTA]))[0]
-        relacionados = [r.id for r in corpus.relacionados(p.alvo_id, k=gerador_mod.RELACIONADOS_POR_PEDIDO)]
-        assert [t.id for t in p.contexto][1:] == relacionados
+        pedidos = g.planejar(ParametrosDeSintese(quantidade=5, seed=1, tipos=[TipoDeTarefa.SEM_RESPOSTA]))
+        for p in pedidos:
+            remissoes = artigos_mencionados(corpus.texto_do_artigo(p.alvo_id))
+            relacionados = [r.id for r in corpus.relacionados(p.alvo_id, k=gerador_mod.RELACIONADOS_POR_PEDIDO)]
+            esperado = [p.alvo_id]
+            for i in remissoes + relacionados:
+                if i not in esperado and corpus.existe(i):
+                    esperado.append(i)
+            assert [t.id for t in p.contexto] == esperado
+        # O art. 1 do corpus de teste remete ao art. 48: a remissao vem logo depois do alvo.
+        alvo1 = next(p for p in pedidos if p.alvo_id == "LGPD:art.1")
+        assert [t.id for t in alvo1.contexto][1] == "LGPD:art.48"
+
+    def test_corpus_composto_sorteia_alvo_so_da_lei_e_aceita_citacao_do_complemento(self, repositorio):
+        regulamento = [
+            "Art. 1º A multa simples será aplicada quando a infração for classificada como grave.",
+            "Art. 2º A advertência cabe quando a infração for leve ou média.",
+        ]
+        composto = ingestao.Corpus("LGPD", chunkar(_LEI) + chunkar(regulamento, fonte="DOSIMETRIA"), Path("fake.txt"))
+        g = GeradorDeSintese(ServicoDuble(), composto, repositorio, banco_inicial=[])
+        pedidos = g.planejar(ParametrosDeSintese(quantidade=14, seed=3))
+        assert {p.alvo_id for p in pedidos} == {a.id for a in composto.artigos("LGPD")}
+        assert all(composto.existe(t.id) for p in pedidos for t in p.contexto)
+        assert g._normalizar_citacoes(["DOSIMETRIA:art.1", "DOSIMETRIA:art.9"]) == (["DOSIMETRIA:art.1"], ["DOSIMETRIA:art.9"])
 
     @pytest.mark.skipif(not Path("recursos/fontes/lgpd.txt").exists(), reason="texto da LGPD nao baixado")
     def test_ancoras_da_taxonomia_existem_na_lgpd(self):
@@ -437,6 +462,7 @@ class TestAncorasEContexto:
         assert job.descartes_por_motivo == {gerador_mod.MOTIVO_CITACAO_FORA_DO_CONTEXTO: 1}
         descartado = repositorio.descartados(job.id)[0]
         assert descartado.detalhe.startswith("LGPD:art.") and descartado.tipo == TipoDeTarefa.SEM_RESPOSTA
+        assert descartado.alvo_id == "LGPD:art.1"
 
     async def test_inciso_de_artigo_em_contexto_nao_e_fora(self, corpus, repositorio):
         especiais = {"LGPD:art.1": lambda p: _gerado(p.indice, "O que e' dado pessoal segundo a definicao legal?", ["LGPD:art.5:inc.I"])}
@@ -470,3 +496,4 @@ class TestAncorasEContexto:
         assert "lidos SEM o contexto" in _SYSTEM_PROMPT
         assert "DEFINE o termo" in _SYSTEM_PROMPT
         assert "restrinja a pergunta" in _SYSTEM_PROMPT
+        assert "DOSIMETRIA:art.8:par.3" in _SYSTEM_PROMPT and "PERTINENCIA" in _SYSTEM_PROMPT

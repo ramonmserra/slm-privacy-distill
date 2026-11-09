@@ -246,6 +246,21 @@ vai precisar de `concorrencia: 1` e `LLM_TIMEOUT_S` maior no `.env`.
 
    **Esperado:** `200` com `artigos: 79` e `dispositivos: 452`.
 
+   Repita com o Regulamento de Dosimetria da ANPD (Resolução CD/ANPD
+   4/2023), que entra como fonte complementar:
+
+   ```json
+   { "fonte": "DOSIMETRIA" }
+   ```
+
+   **Esperado:** `200` com `artigos: 28`. Depois, `GET /api/v1/corpus`
+   mostra `fonte: "LGPD"`, `fontes: ["LGPD", "DOSIMETRIA"]` e `artigos: 107`.
+   A síntese sorteia alvos só da LGPD; os artigos do Regulamento entram no
+   contexto por remissão ou por BM25 e são citáveis com o prefixo
+   `DOSIMETRIA:` (ex.: `DOSIMETRIA:art.8:par.3:inc.I:ali.f`). Os Apêndices
+   I e II (tabelas de valor-base e valores mínimos) são imagens no DOU e
+   não estão no corpus; uma resposta correta sobre piso de multa diz isso.
+
 2. Tag `corpus` → `GET /api/v1/corpus/dispositivos/{id_}` com
    `id_ = LGPD:art.7:inc.IX`.
 
@@ -268,10 +283,11 @@ síntese e a condição C6 usam; se ele errar aqui, erra lá.
 
 **No front:** não há tela de corpus. Tudo pelo Swagger.
 
-**Download:** o texto-fonte já está no repositório em
-`recursos/fontes/lgpd.txt`. O corpus chunkado fica em
-`data/corpus/lgpd.jsonl` (um dispositivo por linha, com id canônico) e o
-resumo em `data/corpus/lgpd.manifesto.json`. Não há rota de arquivo;
+**Download:** os textos-fonte já estão no repositório em
+`recursos/fontes/lgpd.txt` e `recursos/fontes/dosimetria_anpd.txt`. O
+corpus chunkado fica em `data/corpus/lgpd.jsonl` e
+`data/corpus/dosimetria.jsonl` (um dispositivo por linha, com id canônico)
+e os resumos em `data/corpus/*.manifesto.json`. Não há rota de arquivo;
 `GET /api/v1/corpus` devolve o resumo para o botão **Download** do Swagger.
 
 ---
@@ -318,10 +334,13 @@ dado, não prompt), então registre o commit do arquivo junto com a versão.
 **Contexto por tipo e descartes de lastro.** Além do artigo-alvo sorteado e
 dos dois relacionados por BM25, cada pedido leva os *artigos-âncora* do tipo
 de tarefa (campo `ancoras` em `app/services/sintese/taxonomia.py`): art. 5º
-e 6º para `conceito`; art. 7º e 11 para `base_legal`; art. 5º, 11 e 12 para
-`identificacao_de_dado`; art. 18 para `direitos_do_titular`; art. 46 e 48
-para `incidente`; art. 5º e 46 para `deveres_dos_agentes`; art. 6º e 7º para
-`analise_de_caso`. `sem_resposta` não tem âncora. Isso corrige o erro do
+e 6º para `conceito`; art. 5º, 7º e 11 para `base_legal`; art. 5º, 11 e 12
+para `identificacao_de_dado`; art. 5º e 18 para `direitos_do_titular`; art.
+46 e 48 para `incidente`; art. 5º e 46 para `deveres_dos_agentes`; art. 5º,
+6º e 7º para `analise_de_caso`. `sem_resposta` não tem âncora. Entram
+também as *remissões* do próprio alvo, os artigos que o texto dele cita
+(art. 44 remete ao 46, art. 42 ao 43, art. 4º ao 7º), até três por pedido.
+Isso corrige o erro do
 primeiro piloto, em que o professor recebia, por exemplo, o art. 30 para
 classificar dados e, sem a definição legal em contexto, respondia "o trecho
 fornecido não contém a definição" ou citava o art. 5º de memória. Dois
@@ -356,6 +375,8 @@ do Swagger.
 | Resposta autossuficiente | `resposta` e `raciocinio` | lê-se sem o prompt: fala da lei ("a LGPD define", "o art. 11 exige"), nunca "o trecho fornecido" ou "os dispositivos disponíveis" |
 | Conclui quando a lei define | cartões com `tipo` diferente de `sem_resposta` | classificação de dado e base legal têm conclusão item a item; abstenção só quando falta regra ou fato, não quando a definição está no art. 5º |
 | Definição no dispositivo certo | `artigos_citados` | "dado de saúde é sensível" cita o art. 5º, II (a definição), não o art. 11, § 4º (que só menciona saúde) |
+| Regulamento citado certo | `artigos_citados` com prefixo `DOSIMETRIA` | só em perguntas de sanção, multa, agravante ou atenuante; na prosa chamado de "Regulamento de Dosimetria", nunca de artigo da LGPD; nenhum valor dos Apêndices (não transcritos) |
+| Só regra que incide | `resposta` | não invoca solidariedade entre controladores quando há um único controlador, nem regra de dado sensível para dado comum |
 | Descartes fazem sentido | Fonte **Síntese — descartados** | duplicatas são mesmo duplicatas; vazamento do banco inicial foi pego; `citacao_fora_do_contexto` e `referencia_ao_contexto` em poucos casos (muitos = o professor não está seguindo o prompt) |
 
 **Download:** para o grupo ler fora do painel (planilha, impressão), na
@@ -1007,7 +1028,7 @@ inteira para o armazenamento do grupo: é o conjunto completo de evidências.
 
 | O quê | Onde está |
 |---|---|
-| Versão do corpus | cabeçalho de `recursos/fontes/lgpd.txt` |
+| Versão do corpus | cabeçalhos de `recursos/fontes/lgpd.txt` e `recursos/fontes/dosimetria_anpd.txt` |
 | Versão do prompt de síntese | `versao_do_prompt` em cada exemplo e job |
 | Banco de cenários da ANPD | commit de `recursos/fontes/anpd/cenarios.jsonl`; `cenario_id` em cada exemplo |
 | Versão do filtro | `versao_do_filtro` em cada decisão |

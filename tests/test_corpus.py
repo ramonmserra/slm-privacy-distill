@@ -19,6 +19,7 @@ from app.services.corpus.referencias import artigo_de, artigos_mencionados, norm
 from app.services.corpus.retrieval import Documento, IndiceBM25, tokenizar
 
 LGPD_TXT = Path("recursos/fontes/lgpd.txt")
+DOSIMETRIA_TXT = Path("recursos/fontes/dosimetria_anpd.txt")
 BANCO = Path("recursos/avaliacao/banco_inicial_lgpd.jsonl")
 
 _TRECHO = """
@@ -214,8 +215,57 @@ class TestEndpointsDoCorpus:
     def test_fonte_desconhecida(self, client):
         assert client.post("/api/v1/corpus/ingerir", json={"fonte": "CDC"}).status_code == 404
 
+    @pytest.mark.skipif(not DOSIMETRIA_TXT.exists(), reason="texto do Regulamento nao baixado")
+    def test_ingerir_complemento_recarrega_o_corpus_ativo(self, client):
+        client.post("/api/v1/corpus/ingerir", json={"fonte": "LGPD"})
+        assert client.get("/api/v1/corpus").json()["fontes"] == ["LGPD"]
+        r = client.post("/api/v1/corpus/ingerir", json={"fonte": "DOSIMETRIA"})
+        assert r.status_code == 200 and r.json()["artigos"] == 28, r.text
+        resumo = client.get("/api/v1/corpus").json()
+        assert resumo["fonte"] == "LGPD" and resumo["fontes"] == ["LGPD", "DOSIMETRIA"]
+        assert client.get("/api/v1/corpus/dispositivos/DOSIMETRIA:art.8:par.3:inc.I:ali.f").status_code == 200
+
     def test_recarrega_do_disco_apos_restart(self, client):
         client.post("/api/v1/corpus/ingerir", json={"fonte": "LGPD"})
         ingestao.registro.limpar()  # simula outro processo
         assert client.get("/api/v1/corpus").status_code == 200
         assert CorpusRepository().carregar("LGPD")
+
+
+@pytest.mark.skipif(not (LGPD_TXT.exists() and DOSIMETRIA_TXT.exists()), reason="fontes nao baixadas")
+class TestRegulamentoDeDosimetria:
+    """O Regulamento entra como fonte COMPLEMENTAR: mesmo chunking e mesma
+    verificacao de citacao da lei, prefixo proprio, sem virar alvo do plano."""
+
+    @pytest.fixture(scope="class")
+    def regulamento(self):
+        linhas = DOSIMETRIA_TXT.read_text(encoding="utf-8").splitlines()
+        return ingestao.Corpus("DOSIMETRIA", chunkar(linhas, fonte="DOSIMETRIA"), DOSIMETRIA_TXT)
+
+    @pytest.fixture(scope="class")
+    def composto(self):
+        lei = chunkar(LGPD_TXT.read_text(encoding="utf-8").splitlines())
+        reg = chunkar(DOSIMETRIA_TXT.read_text(encoding="utf-8").splitlines(), fonte="DOSIMETRIA")
+        return ingestao.Corpus("LGPD", lei + reg, LGPD_TXT)
+
+    def test_chunking_do_anexo(self, regulamento):
+        assert len(regulamento.artigos()) == 28
+        for id_ in (
+            "DOSIMETRIA:art.8:par.3:inc.I:ali.f", "DOSIMETRIA:art.13:inc.I:ali.a", "DOSIMETRIA:art.17:par.2",
+            "DOSIMETRIA:art.4:par.unico", "DOSIMETRIA:art.15:inc.II", "DOSIMETRIA:art.27:par.unico",
+        ):
+            assert regulamento.existe(id_), id_
+        assert "discriminatórios" in regulamento.dispositivo("DOSIMETRIA:art.8:par.3:inc.I:ali.f").texto
+        art14 = regulamento.dispositivo("DOSIMETRIA:art.14")
+        assert "Subseção" not in art14.texto and art14.secao.startswith("Seção IV")
+        assert regulamento.dispositivo("DOSIMETRIA:art.28").capitulo.startswith("Capítulo III")
+        assert not regulamento.existe("DOSIMETRIA:art.32")  # alteracoes da Resolucao 1/2021 ficaram de fora
+
+    def test_corpus_composto_mantem_a_lei_como_principal(self, corpus, composto):
+        assert composto.fontes == ["LGPD", "DOSIMETRIA"]
+        assert [a.id for a in composto.artigos("LGPD")] == [a.id for a in corpus.artigos()]
+        assert len(composto.artigos()) == len(corpus.artigos()) + 28
+        assert composto.texto_do_artigo("DOSIMETRIA:art.12").startswith("Art. 12")
+        assert composto.resumo().fonte == "LGPD" and composto.resumo().fontes == ["LGPD", "DOSIMETRIA"]
+        ids = [a.id for a in composto.buscar("circunstâncias agravantes reincidência específica multa", k=3)]
+        assert any(i.startswith("DOSIMETRIA:") for i in ids), ids
