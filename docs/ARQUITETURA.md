@@ -47,21 +47,6 @@ flowchart TB
     TR -. adapter / GGUF .-> OLL
 ```
 
-Princípios herdados do projeto de referência (Incubadora de Agentes):
-
-- **Camada única de provedor.** Só `app/core/llm.py` conhece nomes de
-  modelo. Call sites pedem um **papel**.
-- **Contratos em `Protocol`, dublês em teste.** Nenhum teste da suíte
-  default fala com a rede.
-- **Saída estruturada validada**, consumo contabilizado **antes** da
-  validação, retentativa só em erro de validação.
-- **Verificação determinística por cima do juiz.** O LLM julga; regras em
-  código (citações existem? abstenção onde devia?) decidem o que o LLM não
-  pode.
-- **Held-out por construção**, não por disciplina: split por hash do id.
-- **Ausência declarada > número inventado.** Modelo sem preço aparece como
-  "sem preço", nunca como custo zero.
-
 ---
 
 ## 2. Camadas e módulos
