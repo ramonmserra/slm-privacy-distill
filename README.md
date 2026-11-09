@@ -30,7 +30,7 @@ O projeto é construído em etapas, cada uma validável sozinha:
 
 | Etapa | Conteúdo | Estado |
 |---|---|---|
-| 0 — Fundação | API, autenticação, camada única de LLM (professor/juiz/aluno), telemetria de custo, orçamento por job, testes, CI | ✅ pronta |
+| 0 — Fundação | API, autenticação, camada única de LLM (professor/juiz/aluno), telemetria de custo, orçamento por job, testes | ✅ pronta |
 | 1 — Corpus + Síntese | LGPD chunkada por dispositivo com id canônico, BM25, parser de referências, geração sintética pelo professor com dedup e verificação de citações | ✅ pronta |
 | 2 — Filtro + Dataset | pré-checagem determinística de citações, self-consistency do professor julgada pelo juiz, rubrica de qualidade, held-out por hash, export JSONL de chat versionado | ✅ pronta |
 | 3 — Treino externo | receita SFT+LoRA igual na CPU local (0.6B, validação) e no Colab T4 (1.7B), notebook, GGUF para o Ollama, registro e verificação de runs | ✅ pronta |
