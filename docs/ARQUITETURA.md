@@ -1,11 +1,5 @@
 # Arquitetura — GENA (destilação de SLM em Privacidade e Proteção de Dados)
 
-Como o sistema é construído: camadas, módulos, contratos e fluxos. Fonte da
-verdade: o código em `app/`. Revisado contra a árvore de trabalho em
-2026-10-18, com as cinco etapas de software entregues (fundação, corpus e
-síntese, filtro e dataset, treino externo, avaliação, on-policy e relatórios).
-
-Documento irmão: [`../README.md`](../README.md) (como rodar).
 
 ---
 
