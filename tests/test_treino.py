@@ -147,6 +147,25 @@ class TestTemplateDeChatGenerico:
         assert prompt.endswith("### resposta:\n") and self._render(self.MENSAGENS, False).startswith(prompt)
 
 
+class TestNormalizarTokenizer:
+    def test_lista_vira_additional_special_tokens(self, tmp_path):
+        from treino import normalizar_tokenizer
+
+        caminho = tmp_path / "tokenizer_config.json"
+        caminho.write_text(json.dumps({"tokenizer_class": "Qwen2Tokenizer", "extra_special_tokens": ["<|im_start|>", "<|im_end|>"]}), encoding="utf-8")
+        assert normalizar_tokenizer.main([str(tmp_path)]) == 0
+        config = json.loads(caminho.read_text(encoding="utf-8"))
+        assert "extra_special_tokens" not in config
+        assert config["additional_special_tokens"] == ["<|im_start|>", "<|im_end|>"] and config["tokenizer_class"] == "Qwen2Tokenizer"
+
+    def test_dicionario_ou_ausente_fica_como_esta(self):
+        from treino.normalizar_tokenizer import normalizar
+
+        for config in ({"extra_special_tokens": {"a": "<a>"}}, {"tokenizer_class": "X"}):
+            antes = json.dumps(config)
+            assert normalizar(config) is False and json.dumps(config) == antes
+
+
 class TestServicoDeRegistro:
     def test_esta_servido_aceita_tag(self):
         assert servico.esta_servido("local:qwen3-1.7b-lgpd-ab12", ["qwen3-1.7b-lgpd-ab12:latest", "qwen3:1.7b"])

@@ -19,6 +19,10 @@ if [ ! -d llama.cpp ]; then
 fi
 pip install -q -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
 
+# O pip acima rebaixa o transformers para o 4.x que o conversor exige; o
+# tokenizer salvo pelo treino (5.x) precisa deste ajuste para ser lido por ele.
+python -m treino.normalizar_tokenizer "$ORIGEM"
+
 python llama.cpp/convert_hf_to_gguf.py "$ORIGEM" --outfile "$DESTINO/modelo-f16.gguf" --outtype f16
 
 if [ ! -x llama.cpp/build/bin/llama-quantize ]; then
