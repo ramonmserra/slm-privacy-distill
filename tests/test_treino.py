@@ -111,6 +111,19 @@ class TestScriptDryRun:
         assert run["modelo_base"] == "Qwen/Qwen3-4B" and run["hiperparametros"]["epocas"] == 1.0
 
 
+class TestPassosDeAquecimento:
+    def test_tres_por_cento_do_total_no_perfil_do_colab(self):
+        # 2592 exemplos / lote 2 = 1296 lotes; / acumulacao 8 = 162 passos; x 2 epocas = 324; 3% -> 10
+        assert sft_lora.passos_de_aquecimento(2592, PERFIS["colab-t4"]) == 10
+
+    def test_poucos_exemplos_nao_quebra(self):
+        assert sft_lora.passos_de_aquecimento(8, PERFIS["colab-t4"]) == 1
+        assert sft_lora.passos_de_aquecimento(1, PERFIS["cpu-local"]) == 1
+
+    def test_e_inteiro(self):
+        assert isinstance(sft_lora.passos_de_aquecimento(40, PERFIS["cpu-local"]), int)
+
+
 class TestServicoDeRegistro:
     def test_esta_servido_aceita_tag(self):
         assert servico.esta_servido("local:qwen3-1.7b-lgpd-ab12", ["qwen3-1.7b-lgpd-ab12:latest", "qwen3:1.7b"])

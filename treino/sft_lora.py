@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import math
 import sys
 import time
 from pathlib import Path
@@ -93,6 +94,22 @@ def _carregar_modelo(classe, nome: str, dtype, **kwargs):
         return classe.from_pretrained(nome, torch_dtype=dtype, **kwargs)
 
 
+FRACAO_DE_AQUECIMENTO = 0.03
+
+
+def passos_de_aquecimento(exemplos: int, perfil: Perfil) -> int:
+    """Passos de warmup como INTEIRO (3% do total de passos do otimizador).
+
+    `warmup_ratio` foi removido das versoes novas do transformers/TRL que o
+    Colab instala; `warmup_steps` inteiro e' aceito por todas. A conta repete
+    a do Trainer: lotes por epoca / acumulacao, vezes epocas, teto em cada
+    etapa."""
+
+    lotes_por_epoca = math.ceil(exemplos / perfil.tamanho_do_lote)
+    passos_por_epoca = max(1, math.ceil(lotes_por_epoca / perfil.acumulacao))
+    return math.ceil(math.ceil(passos_por_epoca * perfil.epocas) * FRACAO_DE_AQUECIMENTO)
+
+
 def _prompt_e_completion(linha: dict) -> dict:
     """`messages` [system, user, assistant] -> {"prompt": [system, user],
     "completion": [assistant]}, o formato conversacional prompt/completion do
@@ -149,7 +166,7 @@ def treinar(perfil: Perfil, treino: list[dict], held_out: list[dict], saida: Pat
         save_strategy="epoch",
         eval_strategy="epoch" if held_out else "no",
         lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
+        warmup_steps=passos_de_aquecimento(len(treino), perfil),
         report_to="none",
         seed=42,
     )
