@@ -166,6 +166,35 @@ class TestNormalizarTokenizer:
             assert normalizar(config) is False and json.dumps(config) == antes
 
 
+class TestResumoDoRun:
+    RUN = {
+        "status": "concluido", "modelo_base": "Qwen/Qwen3-1.7B", "dataset_versao": "ab12cd34ef56", "duracao_s": 3629.4,
+        "exemplos_de_treino": 2592, "metricas": {"train_loss": 0.7485, "eval_loss": 0.6286, "eval_mean_token_accuracy": 0.8287},
+        "hiperparametros": {"lora_r": 16}, "hardware": {"gpu": "Tesla T4"},
+    }
+
+    def test_traz_tempo_metricas_e_parametros(self):
+        from treino.resumo import resumir
+
+        texto = resumir(self.RUN, {"modelo-q4_k_m.gguf": 1107408736})
+        for trecho in ("ab12cd34ef56", "3629 s (1.01 h)", "Perda no held-out (final): 0.6286", "Acuracia por token no held-out: 0.8287",
+                       "lora_r: 16", "gpu: Tesla T4", "modelo-q4_k_m.gguf: 1056.1 MB"):
+            assert trecho in texto
+
+    def test_grava_arquivo_ao_lado_do_run(self, tmp_path):
+        from treino import resumo
+
+        (tmp_path / "run.json").write_text(json.dumps(self.RUN), encoding="utf-8")
+        assert resumo.main([str(tmp_path / "run.json"), str(tmp_path / "resumo.txt")]) == 0
+        texto = (tmp_path / "resumo.txt").read_text(encoding="utf-8")
+        assert "run.json" in texto and "resumo.txt" not in texto
+
+    def test_run_sem_metricas_nao_quebra(self):
+        from treino.resumo import resumir
+
+        assert "Duracao total:       0 s" in resumir({"status": "falhou"})
+
+
 class TestServicoDeRegistro:
     def test_esta_servido_aceita_tag(self):
         assert servico.esta_servido("local:qwen3-1.7b-lgpd-ab12", ["qwen3-1.7b-lgpd-ab12:latest", "qwen3:1.7b"])
