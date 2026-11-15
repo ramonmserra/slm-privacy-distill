@@ -32,6 +32,7 @@ from treino.preparacao import (
     MODULOS_LORA_QWEN,
     PERFIS,
     PREFIXO_SEM_PENSAR_QWEN3,
+    TEMPLATE_DE_CHAT_GENERICO,
     Perfil,
     RegistroDoRun,
     carregar_jsonl,
@@ -134,6 +135,10 @@ def treinar(perfil: Perfil, treino: list[dict], held_out: list[dict], saida: Pat
     tokenizer = AutoTokenizer.from_pretrained(perfil.modelo_base)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    if not getattr(tokenizer, "chat_template", None):
+        print("AVISO: modelo-base sem template de chat; usando TEMPLATE_DE_CHAT_GENERICO "
+              "(sirva com treino/Modelfile.sem-chat.template).", file=sys.stderr)
+        tokenizer.chat_template = TEMPLATE_DE_CHAT_GENERICO
 
     dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[perfil.precisao]
     kwargs: dict = {}

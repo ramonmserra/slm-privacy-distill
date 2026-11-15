@@ -24,6 +24,23 @@ from typing import Any
 PREFIXO_SEM_PENSAR_QWEN3 = "<think>\n\n</think>\n\n"
 
 
+# Modelo-base SEM template de chat (ex.: Manaca-1B, so' pre-treinado): o TRL
+# precisa de um para montar system/user/assistant. Este usa apenas texto e os
+# tokens bos/eos que o modelo ja' tem -- nenhum token novo, entao nao ha'
+# embedding a redimensionar. Marcadores em minusculas porque o tokenizer do
+# Manaca normaliza tudo para minusculas. O Modelfile do Ollama TEM de repetir
+# esta sequencia (ver Modelfile.sem-chat.template).
+TEMPLATE_DE_CHAT_GENERICO = (
+    "{{ bos_token }}"
+    "{% for m in messages %}"
+    "{% if m['role'] == 'system' %}{{ m['content'] }}\n\n"
+    "{% elif m['role'] == 'user' %}### pergunta:\n{{ m['content'] }}\n\n"
+    "{% elif m['role'] == 'assistant' %}### resposta:\n{{ m['content'] }}{{ eos_token }}"
+    "{% endif %}{% endfor %}"
+    "{% if add_generation_prompt %}### resposta:\n{% endif %}"
+)
+
+
 @dataclass(frozen=True)
 class Perfil:
     """Hiperparametros por hardware. `colab-t4`: 16 GB, so' fp16 (T4 nao tem

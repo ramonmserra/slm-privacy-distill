@@ -27,6 +27,8 @@ if [ ! -x llama.cpp/build/bin/llama-quantize ]; then
 fi
 llama.cpp/build/bin/llama-quantize "$DESTINO/modelo-f16.gguf" "$DESTINO/modelo-q4_k_m.gguf" Q4_K_M
 
-cp "$(dirname "$0")/Modelfile.template" "$DESTINO/Modelfile"
+# 3o argumento opcional: outro Modelfile (ex.: treino/Modelfile.sem-chat.template
+# para modelo-base sem template de chat). Padrao: o do Qwen3.
+cp "${3:-$(dirname "$0")/Modelfile.template}" "$DESTINO/Modelfile"
 ls -lh "$DESTINO"
 echo "Baixe modelo-q4_k_m.gguf + Modelfile e, na maquina do Ollama: ollama create <nome> -f Modelfile"

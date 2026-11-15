@@ -1,0 +1,26 @@
+# Modelfile do Ollama para aluno treinado sobre modelo-base SEM template de
+# chat (ex.: Manaca-1B), em GGUF.
+#
+#   ollama create manaca-1b-base-lgpd-ab12cd34 -f Modelfile
+#
+# O TEMPLATE repete `TEMPLATE_DE_CHAT_GENERICO` de treino/preparacao.py: system
+# em texto puro, depois "### pergunta:" e "### resposta:". Treino e inferencia
+# tem de ver a mesma sequencia. Sem <s> aqui: o Ollama acrescenta o BOS pelo
+# metadado do GGUF. Sem bloco <think>: treine com --prefixo-do-assistente "".
+#
+# SEM `SYSTEM`: o system prompt do aluno e' enviado pela API a cada requisicao.
+FROM ./modelo-q4_k_m.gguf
+
+TEMPLATE """{{- range .Messages }}{{ if eq .Role "system" }}{{ .Content }}
+
+{{ else if eq .Role "user" }}### pergunta:
+{{ .Content }}
+
+{{ else if eq .Role "assistant" }}### resposta:
+{{ .Content }}</s>{{ end }}{{ end }}### resposta:
+"""
+
+PARAMETER stop </s>
+PARAMETER stop "### pergunta:"
+PARAMETER temperature 0
+PARAMETER num_ctx 4096

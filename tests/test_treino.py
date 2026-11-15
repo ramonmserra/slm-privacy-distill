@@ -21,6 +21,7 @@ from treino import sft_lora
 from treino.preparacao import (
     PERFIS,
     PREFIXO_SEM_PENSAR_QWEN3,
+    TEMPLATE_DE_CHAT_GENERICO,
     RegistroDoRun,
     carregar_jsonl,
     modelo_local_id_sugerido,
@@ -122,6 +123,28 @@ class TestPassosDeAquecimento:
 
     def test_e_inteiro(self):
         assert isinstance(sft_lora.passos_de_aquecimento(40, PERFIS["cpu-local"]), int)
+
+
+class TestTemplateDeChatGenerico:
+    MENSAGENS = [
+        {"role": "system", "content": "instrucao"},
+        {"role": "user", "content": "pergunta?"},
+        {"role": "assistant", "content": "resposta."},
+    ]
+
+    def _render(self, mensagens, add_generation_prompt):
+        jinja2 = pytest.importorskip("jinja2")
+        return jinja2.Template(TEMPLATE_DE_CHAT_GENERICO).render(
+            messages=mensagens, add_generation_prompt=add_generation_prompt, bos_token="<s>", eos_token="</s>")
+
+    def test_conversa_completa(self):
+        assert self._render(self.MENSAGENS, False) == "<s>instrucao\n\n### pergunta:\npergunta?\n\n### resposta:\nresposta.</s>"
+
+    def test_prompt_e_prefixo_da_conversa_completa(self):
+        # O TRL mascara a perda pelo comprimento do prompt: ele precisa ser
+        # prefixo exato da conversa completa, senao a perda cai no lugar errado.
+        prompt = self._render(self.MENSAGENS[:2], True)
+        assert prompt.endswith("### resposta:\n") and self._render(self.MENSAGENS, False).startswith(prompt)
 
 
 class TestServicoDeRegistro:
