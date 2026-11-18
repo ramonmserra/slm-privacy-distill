@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import math
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -202,7 +203,26 @@ def treinar(perfil: Perfil, treino: list[dict], held_out: list[dict], saida: Pat
         fundido = PeftModel.from_pretrained(base, saida / "adapter").merge_and_unload()
         fundido.save_pretrained(saida / "merged", safe_serialization=True)
         tokenizer.save_pretrained(saida / "merged")
+        copiar_vocabulario_sentencepiece(perfil.modelo_base, saida / "merged")
     return metricas
+
+
+def copiar_vocabulario_sentencepiece(modelo_base: str, destino: Path, baixar=None) -> bool:
+    """Copia o `tokenizer.model` do modelo-base para a pasta fundida, se ele
+    existir. O tokenizer "fast" so' salva `tokenizer.json`; para modelos de
+    vocabulario SentencePiece (ex.: Manaca) o conversor do llama.cpp precisa
+    do `tokenizer.model` original, senao a exportacao para GGUF falha. Modelos
+    sem esse arquivo (ex.: Qwen) seguem sem ele. Devolve True se copiou."""
+
+    if baixar is None:
+        from huggingface_hub import hf_hub_download as baixar
+    try:
+        origem = baixar(modelo_base, "tokenizer.model")
+    except Exception as exc:  # arquivo inexistente no repo ou sem rede: a exportacao dira' se fazia falta
+        print(f"tokenizer.model nao copiado de {modelo_base} ({type(exc).__name__}); normal para modelos sem SentencePiece.")
+        return False
+    shutil.copyfile(origem, destino / "tokenizer.model")
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -166,6 +166,24 @@ class TestNormalizarTokenizer:
             assert normalizar(config) is False and json.dumps(config) == antes
 
 
+class TestVocabularioSentencePiece:
+    def test_copia_quando_o_base_tem_tokenizer_model(self, tmp_path):
+        origem = tmp_path / "cache" / "tokenizer.model"
+        origem.parent.mkdir()
+        origem.write_bytes(b"spm")
+        destino = tmp_path / "merged"
+        destino.mkdir()
+        assert sft_lora.copiar_vocabulario_sentencepiece("org/modelo", destino, baixar=lambda repo, nome: str(origem)) is True
+        assert (destino / "tokenizer.model").read_bytes() == b"spm"
+
+    def test_segue_sem_o_arquivo_quando_o_base_nao_tem(self, tmp_path, capsys):
+        def nao_existe(repo, nome):
+            raise FileNotFoundError(nome)
+
+        assert sft_lora.copiar_vocabulario_sentencepiece("Qwen/Qwen3-1.7B", tmp_path, baixar=nao_existe) is False
+        assert not (tmp_path / "tokenizer.model").exists() and "nao copiado" in capsys.readouterr().out
+
+
 class TestResumoDoRun:
     RUN = {
         "status": "concluido", "modelo_base": "Qwen/Qwen3-1.7B", "dataset_versao": "ab12cd34ef56", "duracao_s": 3629.4,
