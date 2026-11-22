@@ -209,3 +209,46 @@ exemplos/decisões/amostras, e painel de runs e relatórios. Disparar síntese,
 filtro e treino fica fora: operações caras e raras, já cobertas pelo Swagger
 e pelo guia de execução; um botão para elas convidaria ao gasto acidental.
 Sintaxe do JS validada por `node --check` na suíte (pula sem Node).
+
+## 2026-11-22 — Entrada em minúsculas para o Manacá (C5)
+
+O tokenizador do Manacá normaliza o texto no treino (`tokenizer.json`:
+`Sequence[NFKC, Lowercase]`). O GGUF até traz
+`tokenizer.ggml.normalizer.lowercase: true`, mas o llama.cpp/Ollama
+tokeniza a entrada crua: o modelo servido recebia maiúsculas que nunca viu
+no treino. `app/core/llm.py` (`adaptar_entrada`) aplica NFKC + minúsculas
+ao system e à pergunta de modelos `manaca-*` antes de enviar; os demais
+recebem o texto intacto. O prompt do aluno e o do juiz não mudam, então a
+versão da medida é a mesma. Efeito no held-out (régua 3): 17,6% → 26,7%
+(+8,4 p.p. nos 131 itens em comum, p = 0,043). O run antigo do C5 fica
+registrado como substituído.
+
+## 2026-11-22 — C4 = DPO continuando o C3, aprovação pela conclusão
+
+O ensaio on-policy (20 prompts × 4 amostras) deu 25% de prompts com
+amostra aprovada com lastro, abaixo do mínimo de 50%, e 65% com ao menos
+uma amostra de conclusão correta. A autodestilação on-policy é objetivo do
+projeto, então a C4 é executada com um desvio declarado:
+
+- **Aprovação pela conclusão** (`exigir_lastro: false`): aprovada = correta
+  e sem artigo inexistente. Rende 12 pares DPO em 20 prompts (5 com lastro)
+  e o par rejeitado passa a ser uma resposta de conclusão errada; com
+  lastro exigido, respostas corretas cairiam do lado rejeitado. O eixo
+  "correto" é o que a tabela principal reporta e o que tem calibração
+  humana. Risco aceito: reforçar citações erradas; a avaliação da C4
+  reporta artigos inexistentes e lastro ao lado da acurácia.
+- **DPO, não SFT on-policy, como receita principal.** O `dpo_lora
+  --adapter` continua o LoRA do C3; o `sft_lora` sobre o `sft.jsonl` parte
+  do modelo-base só com as linhas do job (centenas contra 2.592) e mediria
+  falta de dados. O projeto de pesquisa fixa "autodestilação on-policy",
+  não a receita; no texto a C4 é "autodestilação on-policy com otimização
+  por preferência (DPO)".
+- **400 prompts**, para ter pares na casa das centenas dentro de 10 a 20
+  USD de juiz.
+- **Amostragem em GPU do Colab** (`treino/colab_ollama_onpolicy.ipynb`): o
+  mesmo GGUF do C3 num Ollama com T4, exposto por túnel temporário e usado
+  como `LOCAL_LLM_BASE_URL` só durante o job. Em CPU seriam ~23 h sem
+  retomada. A avaliação continua na CPU local, que é o cenário medido.
+- **O adapter do C3 não foi guardado** (o notebook só baixava o GGUF): a
+  sessão da C4 refaz o SFT do C3 com a mesma receita e semente e aplica o
+  DPO sobre ele. O notebook passou a baixar `adapter.zip`.

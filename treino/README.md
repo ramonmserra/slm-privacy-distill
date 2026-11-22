@@ -84,6 +84,18 @@ python -m treino.sft_lora --perfil colab-t4 --dataset sft.jsonl --dataset-versao
 python -m treino.dpo_lora --perfil colab-t4 --pares dpo.jsonl --adapter saida/adapter --dataset-versao VERSAO --saida saida-dpo
 ```
 
+A condição C4 do experimento é o **DPO**: ele parte do aluno já treinado e
+isola o efeito da autodestilação. O SFT on-policy treina do modelo-base só
+com as linhas do `sft.jsonl`; com `limite` no job, fica com muito menos
+exemplos que o SFT original. No notebook, `CONDICAO = "C4"` refaz o SFT do
+C3 e aplica o DPO sobre o adapter gerado (célula 4b); se o `adapter.zip` do
+C3 foi guardado, basta descompactá-lo em `saida/adapter` e rodar o DPO.
+
+A amostragem do job on-policy pode rodar em GPU:
+`colab_ollama_onpolicy.ipynb` serve o mesmo GGUF do aluno num Ollama com T4
+e abre um túnel temporário para a API local usar como `LOCAL_LLM_BASE_URL`
+durante o job (ver o passo 14 do guia de execução).
+
 O `dpo_lora.py` aplica o mesmo prefixo `<think>` vazio aos dois lados do
 par, usa `beta=0.1` e taxa de aprendizado baixa (5e-6), e grava `run.json`
 com `receita: dpo_lora` e `modelo_local_id` com o sufixo `-dpo-`. O `--dry-run`

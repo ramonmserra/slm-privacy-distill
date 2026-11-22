@@ -108,12 +108,12 @@ copiado da resposta de um passo anterior. Anote todos: são reutilizados.
 | 6 | Síntese em volume (2 jobs de 2.000) | Swagger | 10 a 20 USD | 5 aprovado |
 | 7 | Filtro e leitura das reprovações | Swagger + Inspeção | 20 a 40 USD | 6 concluído |
 | 8 | Datasets (filtrado e sem filtro) e download | Swagger | 0 | 7 concluído |
-| 9 | Treinar no Colab (C3, C2, C5) | Colab | 0 | 8 |
+| 9 | Treinar no Colab (C3, C2, C5; a C4 no passo 14) | Colab | 0 | 8 |
 | 10 | Servir no Ollama e registrar o run | terminal + Swagger | 0 | 9 |
 | 11 | Avaliar cada condição | Swagger + Painel + Inspeção | 5 a 30 USD | 4 e 10 |
 | 12 | Comparar item a item | Painel ou Swagger | 0 | 11 |
 | 13 | Calibração humana do juiz | Anotação | 0 | 11 |
-| 14 | On-policy (C4) | Swagger + Inspeção + Colab | 10 a 20 USD | 10 e 11 |
+| 14 | On-policy e DPO (C4) | Swagger + Inspeção + Colab | 10 a 20 USD | 10 e 11 |
 | 15 | Tabelas e custos do TCC | Painel ou Swagger | 0 | 11 |
 
 Condições experimentais que os passos produzem:
@@ -124,7 +124,7 @@ Condições experimentais que os passos produzem:
 | C1 | Qwen3-1.7B base, sem treino | avaliar `modelo: "student"` |
 | C2 | SFT no dataset **sem filtro** | treinar no Colab com `v1-sem-filtro` e avaliar `local:<id>` |
 | C3 | SFT no dataset **filtrado** (principal) | treinar no Colab com `v1-filtrado` e avaliar `local:<id>` |
-| C4 | C3 + rodada on-policy | job on-policy sobre C3, treinar de novo no Colab, avaliar |
+| C4 | C3 + autodestilação on-policy por preferência (DPO) | job on-policy sobre C3, DPO no Colab continuando o LoRA do C3, avaliar |
 | C5 | Manacá-1B com a receita de C3 | treinar no Colab com `--modelo-base menezesbruno/manaca-1b-base` |
 | C6 | Qwen base + RAG, sem treino | avaliar `modelo: "student"` com `com_rag: true` |
 
@@ -619,7 +619,9 @@ O treino é sempre no Google Colab com GPU T4. Esta máquina não treina.
 6. Célula 4 (treino) original, com `--perfil colab-t4`. A célula seguinte
    imprime o resumo do `run.json`.
 7. Célula 5 (GGUF) e célula 6 (download de `modelo-q4_k_m.gguf`,
-   `Modelfile` e `run.json`).
+   `Modelfile`, `run.json`, `resumo.txt` e `adapter.zip`). Guarde o
+   `adapter.zip` do C3: é o LoRA que o DPO da C4 continua (passo 14).
+   A célula 4b (DPO) só age quando `CONDICAO = "C4"`.
 
 Um run por condição, 1 a 2 horas cada:
 
@@ -633,7 +635,7 @@ Um run por condição, 1 a 2 horas cada:
 o `run.json` final tem `status: "concluido"`, `metricas.train_loss`,
 `metricas.eval_loss` e `modelo_local_id` no formato
 `local:qwen3-1.7b-lgpd-xxxxxxxx` (os 8 caracteres vêm da versão do
-dataset). Guarde os três arquivos de cada run numa pasta própria com o
+dataset). Guarde os arquivos de cada run numa pasta própria com o
 nome da condição.
 
 **O que avaliar no `run.json`:**
@@ -913,68 +915,175 @@ calibração; anexe ao TCC.
 O aluno C3 gera várias respostas para cada prompt de treino; o juiz
 seleciona. Pré-requisito: C3 servido no Ollama (passo 10).
 
-**Swagger:**
+**O que é a C4.** Autodestilação on-policy por preferência: o DPO continua
+o LoRA do C3 com pares formados pelas respostas do próprio aluno (a que o
+juiz aprovou contra a que ele reprovou no mesmo prompt). É a receita que
+isola o efeito da autodestilação, porque parte do aluno já treinado. O SFT
+on-policy (`sft.jsonl`) treina do modelo-base só com as linhas do job; com
+`limite`, ele teria muito menos exemplos que o C3 e a comparação mediria a
+falta de dados, não a autodestilação. Use-o apenas como condição
+secundária.
 
-1. Tag `on-policy` → `POST /api/v1/on-policy/jobs` → corpo:
+### 14.1 Ensaio (20 prompts)
 
-   ```json
-   {
-     "dataset_versao": "[VERSAO_FILTRADO]",
-     "aluno": "local:qwen3-1.7b-lgpd-xxxxxxxx",
-     "amostras_por_prompt": 4,
-     "temperatura": 0.8,
-     "teto_usd": 20
-   }
-   ```
+Tag `on-policy` → `POST /api/v1/on-policy/jobs` → corpo:
 
-   Anote o `id` como `[ID_ONPOLICY]`. Para um ensaio, acrescente
-   `"limite": 20`.
+```json
+{
+  "dataset_versao": "[VERSAO_FILTRADO]",
+  "aluno": "local:qwen3-1.7b-lgpd-xxxxxxxx",
+  "amostras_por_prompt": 4,
+  "temperatura": 0.8,
+  "limite": 20,
+  "concorrencia": 1,
+  "teto_usd": 2
+}
+```
 
-2. `GET /api/v1/on-policy/jobs/{job_id}` até concluir (em CPU, horas).
+`GET /api/v1/on-policy/jobs/{job_id}` até concluir (em CPU, cerca de 1 h).
+Baixe `amostras` (item 14.4) e conte, por prompt, duas taxas:
 
-   **Esperado:** `status: "concluido"`; `prompts_com_aprovada / prompts`
-   acima de 50%; `pares_dpo` na casa das centenas; `linhas_sft` próximo de
-   `prompts_com_aprovada`.
+| Taxa | Como contar | Para que serve |
+|---|---|---|
+| com lastro | `prompts_com_aprovada / prompts` do job | critério original: acima de 50% o aluno se autodestila com o padrão (`exigir_lastro: true`) |
+| pela conclusão | prompts com ao menos uma amostra `veredito.correto = true` e sem `artigos_inexistentes` | o que o job renderia com `exigir_lastro: false` |
 
-3. Download: `GET /api/v1/on-policy/jobs/{job_id}/arquivo/{nome}` com
-   `nome = sft` e depois `nome = dpo`. Salve como `sft.jsonl` e `dpo.jsonl`.
-   Um terceiro valor, `nome = amostras`, baixa todas as amostras com o
-   veredito do juiz, para análise. No painel, os três aparecem como botões
-   **sft.jsonl**, **dpo.jsonl** e **amostras.jsonl** na tela **Inspeção**
-   quando a Fonte é On-policy e o job está selecionado. Pelo terminal:
+**Decisão:**
 
-   ```powershell
-   Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/sft" sft.jsonl
-   Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/dpo" dpo.jsonl
-   Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/amostras" amostras.jsonl
-   ```
+| Resultado do ensaio | O que fazer |
+|---|---|
+| taxa com lastro acima de 50% | job completo com o padrão (`exigir_lastro: true`) |
+| taxa com lastro abaixo de 50% e taxa pela conclusão acima de 50% | job com `exigir_lastro: false` (**aprovação pela conclusão**); é um desvio do critério original e tem de constar no texto, com as duas taxas |
+| as duas abaixo de 50% | registre os números e siga sem C4 |
 
-   Em disco: `data/on_policy/[ID_ONPOLICY]/` com os mesmos três arquivos.
+Com `exigir_lastro: false` a amostra aprovada é a de conclusão correta e sem
+artigo inexistente, mesmo que alguma citação não tenha lastro. O risco é o
+treino reforçar citações erradas: por isso a avaliação da C4 reporta, além
+da acurácia, os artigos inexistentes e a taxa de respostas sem lastro, ao
+lado das do C3.
 
-4. No Colab (mesmo notebook, GPU T4), uma das receitas ou as duas como
-   condições separadas:
+### 14.2 Onde gerar as amostras
 
-   ```powershell
-   python -m treino.sft_lora --perfil colab-t4 --dataset sft.jsonl --dataset-versao [VERSAO_FILTRADO] --saida saida-onpolicy
-   python -m treino.dpo_lora --perfil colab-t4 --pares dpo.jsonl --adapter saida/adapter --dataset-versao [VERSAO_FILTRADO] --saida saida-dpo
-   ```
+O gargalo é a geração do aluno. Em CPU cada amostra leva cerca de 50 s, o
+job não tem retomada e `limite` pega sempre os primeiros N prompts (não dá
+para dividir em duas noites). Para ter pares na casa das centenas são
+precisos uns 400 prompts.
 
-5. Servir e registrar (passo 10), avaliar (passo 11) e anotar como
-   `[AV_C4]`. Comparar `[AV_C3]` contra `[AV_C4]` (passo 12).
+| Onde | 400 prompts × 4 amostras | Como |
+|---|---|---|
+| GPU do Colab | 1 a 3 h (estimativa) | `treino/colab_ollama_onpolicy.ipynb`: serve o mesmo GGUF do C3 num Ollama com T4 e abre um túnel temporário |
+| CPU local | cerca de 23 h seguidas | nada a montar; a máquina não pode suspender nem a API reiniciar |
+
+Com a GPU do Colab:
+
+1. Abra `treino/colab_ollama_onpolicy.ipynb` no Colab com GPU T4 e execute
+   as células até a do túnel. Envie `modelo-q4_k_m.gguf` e `Modelfile` da
+   pasta da condição C3. A célula 3 tem de mostrar `100% GPU`.
+2. A célula do túnel imprime `LOCAL_LLM_BASE_URL=https://....trycloudflare.com/v1`.
+   Coloque essa linha no `.env` da API local e reinicie a API (sem
+   `--reload`). Nenhum job pode estar rodando: reiniciar derruba jobs.
+3. Tag `treinos` → `POST /api/v1/treinos/[ID_RUN_C3]/verificar` deve
+   devolver `disponivel: true`: é a API enxergando o aluno pelo túnel.
+4. Dispare o job (14.3) com `"concorrencia": 4` e deixe a célula 5 do
+   notebook rodando até ele concluir.
+5. Ao terminar, rode a célula 6 (fecha o túnel), volte
+   `LOCAL_LLM_BASE_URL=http://localhost:11434/v1` no `.env` e reinicie a
+   API. **A avaliação (passo 11) é sempre na CPU local.**
+
+O túnel é uma URL pública sem autenticação, válida enquanto a sessão do
+Colab estiver aberta. Por ele passam só o prompt do aluno e as perguntas
+do split de treino (dados sintéticos). Não divulgue a URL e feche o túnel
+ao fim do job.
+
+### 14.3 Job
+
+Tag `on-policy` → `POST /api/v1/on-policy/jobs` → corpo (com a aprovação
+pela conclusão; para o padrão, retire `exigir_lastro`):
+
+```json
+{
+  "dataset_versao": "[VERSAO_FILTRADO]",
+  "aluno": "local:qwen3-1.7b-lgpd-xxxxxxxx",
+  "amostras_por_prompt": 4,
+  "temperatura": 0.8,
+  "limite": 400,
+  "concorrencia": 4,
+  "exigir_lastro": false,
+  "teto_usd": 20
+}
+```
+
+Em CPU local use `"concorrencia": 1`. Anote o `id` como `[ID_ONPOLICY]`.
+
+`GET /api/v1/on-policy/jobs/{job_id}` até concluir.
+
+**Esperado:** `status: "concluido"`; `prompts_com_aprovada / prompts`
+acima de 50%; `pares_dpo` na casa das centenas; `linhas_sft` igual a
+`prompts_com_aprovada`. O juiz custa cerca de 0,04 USD por prompt com 4
+amostras.
+
+### 14.4 Download e inspeção
+
+`GET /api/v1/on-policy/jobs/{job_id}/arquivo/{nome}` com `nome = dpo`,
+`nome = sft` e `nome = amostras` (todas as amostras com o veredito do
+juiz). No painel, os três aparecem como botões **sft.jsonl**, **dpo.jsonl**
+e **amostras.jsonl** na tela **Inspeção** quando a Fonte é On-policy e o
+job está selecionado. Pelo terminal:
+
+```powershell
+Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/dpo" dpo.jsonl
+Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/sft" sft.jsonl
+Baixar "on-policy/jobs/[ID_ONPOLICY]/arquivo/amostras" amostras.jsonl
+```
+
+Em disco: `data/on_policy/[ID_ONPOLICY]/` com os mesmos três arquivos.
 
 **No front:** tela **Inspeção** → Fonte **On-policy — reprovadas** → Job
 `[ID_ONPOLICY]`: cada cartão traz a amostra do aluno, o veredito do juiz e
 os artigos inexistentes. Fonte **On-policy — amostras** mostra as
-aprovadas também, com `similaridade` com a referência.
+aprovadas também, com `similaridade` com a referência. Leia 10 aprovadas e
+10 reprovadas **antes** de treinar.
+
+### 14.5 Treino da C4 no Colab
+
+`treino/colab_treino_lgpd.ipynb`, GPU T4, `CONDICAO = "C4"`. Envie
+`treino.jsonl` e `held_out.jsonl` do dataset filtrado **e** o `dpo.jsonl`.
+A sessão refaz o SFT do C3 (mesma receita e semente; cerca de 1 h) para
+ter o adapter LoRA e aplica o DPO sobre ele (célula 4b). O que ela roda:
+
+```powershell
+python -m treino.sft_lora --perfil colab-t4 --dataset treino.jsonl --held-out held_out.jsonl --dataset-versao [VERSAO_FILTRADO] --saida saida
+python -m treino.dpo_lora --perfil colab-t4 --pares dpo.jsonl --adapter saida/adapter --dataset-versao [VERSAO_FILTRADO] --saida saida-dpo
+```
+
+O `run.json` baixado é o do DPO: `receita: "dpo_lora"`, `modelo_local_id`
+no formato `local:qwen3-1.7b-lgpd-dpo-xxxxxxxx`,
+`hiperparametros.pares` igual ao número de linhas do `dpo.jsonl`.
+
+Se o `adapter.zip` do C3 foi guardado (o notebook passou a baixá-lo), o
+SFT não precisa ser refeito: descompacte-o em `saida/adapter` e rode só o
+DPO. Refazer o SFT significa que a C4 parte de um C3 retreinado, não do
+C3 exato que foi avaliado; registre isso no texto.
+
+Condição secundária, se houver tempo: SFT on-policy, com
+`python -m treino.sft_lora --perfil colab-t4 --dataset sft.jsonl --dataset-versao [VERSAO_FILTRADO] --saida saida-onpolicy`.
+
+### 14.6 Servir, avaliar e comparar
+
+Servir e registrar (passo 10), avaliar no held-out (passo 11, na CPU
+local) e anotar como `[AV_C4]`. Comparar `[AV_C3]` contra `[AV_C4]`
+(passo 12).
 
 **O que avaliar:**
 
 | Pergunta | Onde olhar | Esperado |
 |---|---|---|
-| O aluno é bom o bastante para se autodestilar? | `prompts_com_aprovada / prompts` | acima de 50%; abaixo disso, registre o número e siga sem C4 |
-| As aprovadas são boas mesmo? | 10 aprovadas na Inspeção | o grupo concorda; se o juiz aprova resposta sem lastro, o SFT on-policy vai reforçar erro |
+| O aluno é bom o bastante para se autodestilar? | as duas taxas do ensaio (14.1) | uma delas acima de 50%; senão, registre e siga sem C4 |
+| As aprovadas são boas mesmo? | 10 aprovadas na Inspeção | o grupo concorda com a conclusão; anote quantas têm citação errada |
 | As reprovadas foram reprovadas pelo motivo certo? | 10 reprovadas, `veredito.categoria` | `hallucination` e `wrong_legal_basis` dominam |
-| Há pares DPO suficientes? | `pares_dpo` | centenas; com dezenas, só o SFT on-policy vale a pena |
+| Há pares DPO suficientes? | `pares_dpo` | centenas; com dezenas o DPO tem pouco sinal: aumente `limite` |
+| A autodestilação mudou a acurácia? | comparação `[AV_C3]` → `[AV_C4]` | delta com IC95 e McNemar; "sem diferença significativa" é resultado válido |
+| A aprovação pela conclusão piorou as citações? | `itens_com_artigo_inexistente` e `taxa_de_alucinacao` de `[AV_C4]` contra `[AV_C3]` | não aumentar; se aumentar, reporte ao lado da acurácia |
 
 ---
 
