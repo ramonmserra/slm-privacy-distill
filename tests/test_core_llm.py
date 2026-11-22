@@ -167,6 +167,50 @@ class TestMensagens:
         assert [b["text"] for b in a["content"]] == ["ARTIGO\n", "pergunta"]
 
 
+class TestEntradaEmMinusculas:
+    """Modelo cujo tokenizador de treino normaliza (NFKC + minusculas) e cujo
+    GGUF nao: a entrada e' normalizada antes de sair."""
+
+    MANACA = "local:manaca-1b-base-lgpd-5b1301bb"
+
+    def test_manaca_recebe_nfkc_e_minusculas(self):
+        assert llm.adaptar_entrada("O Art. 7º, § 1º da LGPD…", self.MANACA) == "o art. 7o, § 1o da lgpd..."
+
+    def test_acentos_sao_preservados(self):
+        assert llm.adaptar_entrada("INFORMAÇÃO Pública", self.MANACA) == "informação pública"
+
+    def test_qualquer_versao_treinada_do_manaca(self):
+        assert llm.normaliza_entrada_em_minusculas("local:Manaca-1b-base-lgpd-d6c7d57c")
+
+    @pytest.mark.parametrize(
+        "model_id", ["local:qwen3:1.7b", "local:qwen3-1.7b-lgpd-5b1301bb", "openai:gpt-5.6-luna", "anthropic:claude-sonnet-5"]
+    )
+    def test_demais_modelos_recebem_o_texto_intacto(self, model_id):
+        assert llm.adaptar_entrada("O Art. 7º da LGPD", model_id) == "O Art. 7º da LGPD"
+
+    def test_mensagens_de_sistema_e_usuario_saem_normalizadas(self):
+        assert llm.system_message("Voce e' um Assistente", self.MANACA)["content"] == "voce e' um assistente"
+        assert llm.user_message("A EMPRESA pode?", self.MANACA)["content"] == "a empresa pode?"
+        com_prefixo = llm.user_message("Pergunta", self.MANACA, cacheable_prefix="ARTIGO 7º\n")
+        assert com_prefixo["content"] == "artigo 7o\npergunta"
+
+    def test_mensagens_para_outros_modelos_nao_mudam(self):
+        assert llm.user_message("A EMPRESA pode?", "local:qwen3:1.7b")["content"] == "A EMPRESA pode?"
+
+    async def test_cliente_envia_ao_modelo_o_texto_normalizado(self, monkeypatch):
+        recebidas = []
+
+        class _Modelo:
+            async def ainvoke(self, messages):
+                recebidas.extend(messages)
+                return _Mensagem()
+
+        monkeypatch.setattr(llm, "build_chat_model", lambda *a, **k: _Modelo())
+        cliente = llm.StructuredLlmClient(ModelTier.STUDENT, max_tokens=64, override=self.MANACA)
+        await cliente.text_detalhado(system="Responda sobre a LGPD.", user="O Controlador PODE?")
+        assert [m["content"] for m in recebidas] == ["responda sobre a lgpd.", "o controlador pode?"]
+
+
 class Saida(BaseModel):
     valor: int
 

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import os
+import unicodedata
 from collections import OrderedDict
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -133,6 +134,15 @@ _MODELOS_QUE_COBRAM_ESCRITA_DE_CACHE = frozenset({"gpt-5.6-luna"})
 # todos de raciocinio; 8.192 cobre com folga. gpt-6-luna: reamostragem do
 # filtro truncada com 8.192 tokens, todos de raciocinio (2026-11).
 _RESERVA_DE_RACIOCINIO: dict[str, int] = {"gpt-5.6-luna": 8192, "gpt-6-luna": 8192}
+
+# Tokenizador que normaliza o texto (NFKC + minusculas) no TREINO, mas cujo
+# GGUF nao carrega o normalizador: o llama.cpp/Ollama tokeniza a entrada crua
+# e o modelo recebe maiusculas que nunca viu. A entrada e' normalizada aqui,
+# antes de sair. Conferido no `tokenizer.json` de menezesbruno/manaca-1b-base
+# (normalizer = Sequence[NFKC, Lowercase]) e nas respostas do modelo servido,
+# todas em minusculas (2026-11). Prefixo, e nao nome exato, porque cada versao
+# treinada vira um id novo (`manaca-1b-base-lgpd-<versao>`).
+_PREFIXOS_COM_ENTRADA_EM_MINUSCULAS = ("manaca-",)
 
 _avisados_sem_temperatura: set[str] = set()
 
@@ -256,6 +266,21 @@ def reserva_de_raciocinio(model_id: str) -> int:
     return _RESERVA_DE_RACIOCINIO.get(model, 0)
 
 
+def normaliza_entrada_em_minusculas(model_id: str) -> bool:
+    _, model = split_llm_id(model_id)
+    return model.lower().startswith(_PREFIXOS_COM_ENTRADA_EM_MINUSCULAS)
+
+
+def adaptar_entrada(texto: str, model_id: str) -> str:
+    """Texto como o tokenizador de TREINO do modelo o veria. Para a maioria
+    dos modelos e' o proprio texto; para os que normalizam a entrada no treino,
+    NFKC + minusculas (a mesma sequencia do normalizador do tokenizador)."""
+
+    if not normaliza_entrada_em_minusculas(model_id):
+        return texto
+    return unicodedata.normalize("NFKC", texto).lower()
+
+
 def avisos_de_configuracao() -> list[str]:
     """Problemas de configuracao que NAO impedem o processo de subir mas
     comprometem a pesquisa. Expostos em `GET /usage/providers`."""
@@ -352,6 +377,7 @@ def system_message(text: str, model_id: str, *, cacheable: bool = False) -> dict
     explicitamente (Anthropic: `cache_control`). OpenAI cacheia por prefixo
     automaticamente, entao la' `cacheable` nao muda nada."""
 
+    text = adaptar_entrada(text, model_id)
     provider, _ = split_llm_id(model_id)
     if cacheable and provider == PROVIDER_ANTHROPIC:
         return {
@@ -365,6 +391,9 @@ def user_message(text: str, model_id: str, *, cacheable_prefix: str | None = Non
     """Mensagem de usuario com um PREFIXO estavel cacheavel (ex.: o texto do
     artigo da LGPD reenviado em varias chamadas)."""
 
+    text = adaptar_entrada(text, model_id)
+    if cacheable_prefix:
+        cacheable_prefix = adaptar_entrada(cacheable_prefix, model_id)
     if not cacheable_prefix:
         return {"role": "user", "content": text}
     provider, _ = split_llm_id(model_id)
