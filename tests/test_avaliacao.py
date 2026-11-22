@@ -29,8 +29,9 @@ from app.schemas.avaliacao import (
 from app.schemas.dataset import ContagemPorTipo, ManifestoDoDataset, ParametrosDeDataset, Split
 from app.schemas.sintese import StatusDoJob
 from app.services.avaliacao import conjuntos, metricas, pareado
-from app.services.avaliacao.engine import Avaliador, novo_run, resolver_modelo, versao_da_medida
+from app.services.avaliacao.engine import Avaliador, novo_run, novo_run_rejulgado, resolver_modelo, versao_da_medida
 from app.services.avaliacao.llm_service import VERSAO_DO_JUIZ, CasoDeAvaliacao, _build_juiz_prompt, _prompt_do_usuario
+from app.services.avaliacao.rastro import rastro_do_juiz
 from app.services.corpus import ingestao
 from app.services.corpus.chunking import chunkar
 from app.services.sintese.llm_service import TrechoDeContexto
@@ -127,8 +128,20 @@ class TestVerificacaoEDecisao:
         caso = CasoDeAvaliacao(indice=1, item=item("a", conjunto=Conjunto.BANCO_INICIAL, abstencao=True), resposta="R", rastro=[])
         prompt = _build_juiz_prompt([caso])
         assert "MODELO A" in prompt and "CRITERIOS ESPERADOS" in prompt and "Abstencao esperada: SIM" in prompt
-        assert "(nenhum dispositivo de referencia)" in prompt
+        assert "(nenhum dispositivo de referencia nem citado)" in prompt
         assert len(VERSAO_DO_JUIZ) == 12
+
+    def test_rastro_do_juiz_inclui_os_artigos_citados_na_resposta(self, corpus):
+        # Referencia primeiro, depois o que a resposta cita; sem repetir e sem o artigo inexistente.
+        rastro = rastro_do_juiz(corpus, ["LGPD:art.7"], "Pelo art. 18, VI, pelo art. 7º, IX e pelo art. 72 da LGPD.")
+        assert [t.id for t in rastro] == ["LGPD:art.7", "LGPD:art.18"]
+        assert rastro[1].texto.startswith("Art. 18") and "eliminação" in rastro[1].texto
+
+    def test_rastro_do_juiz_sem_citacao_e_sem_referencia(self, corpus):
+        assert [t.id for t in rastro_do_juiz(corpus, ["LGPD:art.48"], "Sem artigo.")] == ["LGPD:art.48"]
+        assert rastro_do_juiz(corpus, [], "Nao sei.") == []
+        # Referencia em nivel de inciso vira o artigo inteiro, uma vez so'.
+        assert [t.id for t in rastro_do_juiz(corpus, ["LGPD:art.7:inc.IX", "LGPD:art.7"], "")] == ["LGPD:art.7"]
 
     def test_prompt_do_usuario_com_e_sem_rag(self):
         i = item("a")
@@ -264,6 +277,41 @@ class TestEngine:
         assert servico.contextos["h0"] == []  # sem RAG
         assert repo.carregar_run(run.id).metricas.acuracia == 0.75
 
+    async def test_juiz_recebe_o_texto_do_artigo_citado_fora_da_referencia(self, ambiente):
+        corpus, repo, datasets = ambiente
+        servico = ServicoDuble(respostas={"h0": "O titular pode pedir a eliminacao, pelo art. 18 da LGPD."})
+        run = novo_run(ParametrosDeAvaliacao(modelo="student", conjunto=Conjunto.HELD_OUT, dataset_versao="v1", limite=1, teto_usd=0))
+        await Avaliador(servico, corpus, repo, datasets).executar(run)
+        assert [t.id for t in servico.casos[0].rastro] == ["LGPD:art.7", "LGPD:art.18"]
+
+    async def test_rejulgar_reaproveita_as_respostas_e_cria_run_novo(self, ambiente):
+        corpus, repo, datasets = ambiente
+        avaliador = Avaliador(ServicoDuble(respostas={"h1": "Resposta errada pelo art. 72."}, falhar_item="h2"), corpus, repo, datasets)
+        origem = await avaliador.executar(novo_run(ParametrosDeAvaliacao(modelo="local:aluno-v1", conjunto=Conjunto.HELD_OUT, dataset_versao="v1", teto_usd=0)))
+
+        juiz_novo = ServicoDuble()
+        novo = novo_run_rejulgado(origem)
+        novo = await Avaliador(juiz_novo, corpus, repo, datasets).rejulgar(novo, repo.itens(origem.id))
+
+        assert novo.id != origem.id and novo.rejulgado_de == origem.id and novo.modelo == origem.modelo
+        assert novo.status == StatusDoJob.CONCLUIDO and novo.itens == 4 and novo.respondidos == 3
+        assert juiz_novo.contextos == {}  # o modelo medido nao foi chamado
+        assert [c.item.id for c in juiz_novo.casos] == ["h0", "h1", "h3"]  # o item com erro nao vai ao juiz
+        assert novo.metricas.julgados == 3 and novo.metricas.acertos == 2 and novo.metricas.itens_com_artigo_inexistente == 1
+        itens = repo.itens(novo.id)
+        assert [r.resposta.texto for r in itens] == [r.resposta.texto for r in repo.itens(origem.id)]
+        assert next(r for r in itens if r.item.id == "h2").veredito is None
+        # O run original fica intacto.
+        assert repo.carregar_run(origem.id).metricas.model_dump() == origem.metricas.model_dump()
+        assert len(repo.itens(origem.id)) == 4
+
+    async def test_rejulgar_com_juiz_falhando_marca_falhou(self, ambiente):
+        corpus, repo, datasets = ambiente
+        origem = await Avaliador(ServicoDuble(), corpus, repo, datasets).executar(
+            novo_run(ParametrosDeAvaliacao(modelo="student", conjunto=Conjunto.HELD_OUT, dataset_versao="v1", teto_usd=0)))
+        novo = await Avaliador(ServicoDuble(juiz_falha=True), corpus, repo, datasets).rejulgar(novo_run_rejulgado(origem), repo.itens(origem.id))
+        assert novo.status == StatusDoJob.FALHOU and novo.metricas.julgados == 0
+
     async def test_com_rag_entrega_artigos_recuperados(self, ambiente):
         corpus, repo, datasets = ambiente
         servico = ServicoDuble()
@@ -341,3 +389,26 @@ class TestEndpoints:
         assert client.post("/api/v1/avaliacao/runs", json={"modelo": "student", "conjunto": "held_out", "dataset_versao": "nao"}).status_code == 404
         assert client.get("/api/v1/avaliacao/runs/nao").status_code == 404
         assert client.get("/api/v1/avaliacao/comparar", params={"a": "x", "b": "y"}).status_code == 404
+
+    def test_rejulgar_cria_run_novo_comparavel_ao_original(self, client):
+        corpo = {"modelo": "local:aluno-v1", "conjunto": "held_out", "dataset_versao": "v1", "teto_usd": 0}
+        origem = self._esperar(client, client.post("/api/v1/avaliacao/runs", json=corpo).json()["id"])
+        r = client.post(f"/api/v1/avaliacao/runs/{origem['id']}/rejulgar")
+        assert r.status_code == 202, r.text
+        assert r.json()["id"] != origem["id"] and r.json()["rejulgado_de"] == origem["id"]
+        novo = self._esperar(client, r.json()["id"])
+        assert novo["status"] == "concluido" and novo["metricas"]["acertos"] == 3 and novo["modelo"] == origem["modelo"]
+        comparacao = client.get("/api/v1/avaliacao/comparar", params={"a": origem["id"], "b": novo["id"]}).json()
+        assert comparacao["itens_em_comum"] == 4 and comparacao["delta_acuracia"] == 0
+
+    def test_rejulgar_erros(self, client, ambiente):
+        _, repo, _ = ambiente
+        assert client.post("/api/v1/avaliacao/runs/nao/rejulgar").status_code == 404
+        em_andamento = novo_run(ParametrosDeAvaliacao(modelo="student", conjunto=Conjunto.HELD_OUT, dataset_versao="v1"))
+        em_andamento.status = StatusDoJob.EXECUTANDO
+        repo.salvar_run(em_andamento)
+        assert client.post(f"/api/v1/avaliacao/runs/{em_andamento.id}/rejulgar").status_code == 409
+        sem_respostas = novo_run(ParametrosDeAvaliacao(modelo="student", conjunto=Conjunto.HELD_OUT, dataset_versao="v1"))
+        sem_respostas.status = StatusDoJob.FALHOU
+        repo.salvar_run(sem_respostas)
+        assert client.post(f"/api/v1/avaliacao/runs/{sem_respostas.id}/rejulgar").status_code == 409

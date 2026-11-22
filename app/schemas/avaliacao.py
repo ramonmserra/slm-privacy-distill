@@ -127,6 +127,7 @@ class RunDeAvaliacao(BaseModel):
     modelo: str = Field(description="Id qualificado efetivamente medido")
     modelo_juiz: str = ""
     versao_da_medida: str = Field(description="hash(prompt do juiz + prompt do aluno + regras + conjunto); runs so' se comparam se igual")
+    rejulgado_de: str | None = Field(default=None, description="Id do run cujas respostas foram julgadas de novo neste run")
     criado_em: dt.datetime
     atualizado_em: dt.datetime
     itens: int = 0

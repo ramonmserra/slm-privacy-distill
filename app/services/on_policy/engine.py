@@ -6,7 +6,8 @@ engine so' le `treino.jsonl`):
 1. o ALUNO gera N amostras com temperatura;
 2. verificacao deterministica: artigos mencionados existem no corpus;
 3. o JUIZ compara cada amostra a referencia do PROFESSOR (a resposta do
-   dataset) com o rastro dos artigos citados -- mesma rubrica da avaliacao;
+   dataset) com o rastro dos artigos de referencia e dos que a amostra cita
+   -- mesma rubrica da avaliacao;
 4. regra (codigo): amostra APROVADA = correta e, se exigido, com lastro e
    sem artigo inexistente;
 5. SFT: a aprovada de maior similaridade vira o turno do assistente; sem
@@ -35,12 +36,12 @@ from app.schemas.on_policy import AmostraJulgada, JobOnPolicy, LinhaDoSftOnPolic
 from app.schemas.sintese import StatusDoJob, TipoDeTarefa
 from app.services.avaliacao.conjuntos import ConjuntoIndisponivel
 from app.services.avaliacao.llm_service import VERSAO_DO_JUIZ, CasoDeAvaliacao
+from app.services.avaliacao.rastro import rastro_do_juiz
 from app.services.corpus.ingestao import Corpus
 from app.services.corpus.referencias import artigo_de, artigos_mencionados
 from app.services.datasets.prompt_do_aluno import PROMPT_DO_ALUNO
 from app.services.lotes import ExecutorDeLotes, dividir
 from app.services.on_policy.llm_service import OnPolicyLLMService
-from app.services.sintese.llm_service import TrechoDeContexto
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +118,6 @@ class EngineOnPolicy:
         self._corpus = corpus
         self._repositorio = repositorio
         self._datasets = datasets
-
-    def _rastro(self, prompt: PromptDeTreino) -> list[TrechoDeContexto]:
-        return [TrechoDeContexto(id=a, texto=self._corpus.texto_do_artigo(a)) for a in prompt.artigos_referencia if self._corpus.existe(a)]
 
     async def _amostrar(self, prompt: PromptDeTreino, indice: int) -> AmostraJulgada:
         try:
@@ -198,7 +196,7 @@ class EngineOnPolicy:
         job.lotes_do_juiz = len(lotes)
 
         async def chamar(lote: list[AmostraJulgada]) -> list[VereditoDeAvaliacao]:
-            casos = [CasoDeAvaliacao(indice=i + 1, item=por_id[a.prompt_id], resposta=a.texto, rastro=self._rastro(por_id[a.prompt_id])) for i, a in enumerate(lote)]
+            casos = [CasoDeAvaliacao(indice=i + 1, item=por_id[a.prompt_id], resposta=a.texto, rastro=rastro_do_juiz(self._corpus, por_id[a.prompt_id].artigos_referencia, a.texto)) for i, a in enumerate(lote)]
             return await self._servico.julgar(casos)
 
         def consolidar(lote: list[AmostraJulgada], vereditos: list[VereditoDeAvaliacao]) -> None:

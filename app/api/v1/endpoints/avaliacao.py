@@ -23,7 +23,8 @@ from app.schemas.avaliacao import (
     RunDeAvaliacao,
 )
 from app.services.avaliacao import calibracao, pareado
-from app.services.avaliacao.engine import Avaliador, novo_run
+from app.schemas.sintese import StatusDoJob
+from app.services.avaliacao.engine import Avaliador, novo_run, novo_run_rejulgado
 from app.services.avaliacao.llm_service import AvaliacaoLLMService, LlmAvaliacaoService
 
 router = APIRouter()
@@ -68,6 +69,28 @@ def _run_ou_404(run_id: str) -> RunDeAvaliacao:
 @router.get("/runs/{run_id}", response_model=RunDeAvaliacao)
 async def obter_run(run_id: str) -> RunDeAvaliacao:
     return _run_ou_404(run_id)
+
+
+@router.post("/runs/{run_id}/rejulgar", response_model=RunDeAvaliacao, status_code=202)
+async def rejulgar(run_id: str) -> RunDeAvaliacao:
+    """Julga de novo as respostas ja' gravadas de um run, com o juiz e o
+    rastro atuais, num run NOVO (o original fica intacto). Nao chama o modelo
+    medido; o custo e' so' o do juiz. Use quando a regua do juiz muda."""
+
+    origem = _run_ou_404(run_id)
+    if origem.status in (StatusDoJob.PENDENTE, StatusDoJob.EXECUTANDO):
+        raise HTTPException(status_code=409, detail=f"Run {run_id!r} ainda esta' em andamento.")
+    respostas = _repositorio.itens(run_id)
+    if not respostas:
+        raise HTTPException(status_code=409, detail=f"Run {run_id!r} nao tem respostas gravadas para rejulgar.")
+    corpus = corpus_ativo()
+    run = novo_run_rejulgado(origem)
+    _repositorio.salvar_run(run)
+    avaliador = Avaliador(servico_de_avaliacao(run.modelo, origem.parametros.max_tokens_resposta), corpus, _repositorio, _datasets)
+    tarefa = asyncio.create_task(avaliador.rejulgar(run, respostas))
+    _tarefas.add(tarefa)
+    tarefa.add_done_callback(_tarefas.discard)
+    return run
 
 
 @router.get("/runs/{run_id}/itens", response_model=list[ResultadoDoItem])

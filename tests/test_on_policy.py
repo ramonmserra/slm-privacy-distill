@@ -90,6 +90,7 @@ class ServicoDuble:
         self.estourar = estourar_na_amostra
         self.falhar = falhar_na_amostra
         self.juiz_falha = juiz_falha
+        self.casos: list = []
 
     async def amostrar(self, pergunta):
         self.n += 1
@@ -102,6 +103,7 @@ class ServicoDuble:
         return RespostaDeTexto(texto=texto, input_tokens=10, output_tokens=5)
 
     async def julgar(self, casos):
+        self.casos.extend(casos)
         if self.juiz_falha:
             raise RuntimeError("juiz caiu")
         return [VereditoDeAvaliacao(indice=c.indice, correto="boa" in c.resposta, criterios_atendidos=0, criterios_total=0, grounded=True,
@@ -138,6 +140,18 @@ class TestEngine:
         assert len(amostras) == 6 and any(a.artigos_inexistentes == ["LGPD:art.72"] for a in amostras)
         # Nunca toca o held-out: so' ids do split de treino.
         assert {a.prompt_id for a in amostras} == {"t0", "t1", "t2"}
+
+    async def test_juiz_recebe_referencia_e_artigos_citados_na_amostra(self, ambiente):
+        corpus, repo, datasets = ambiente
+
+        class CitaOutroArtigo(ServicoDuble):
+            async def amostrar(self, pergunta):
+                return RespostaDeTexto(texto="Resposta boa pelo art. 18 da LGPD.", input_tokens=10, output_tokens=5)
+
+        servico = CitaOutroArtigo()
+        job = novo_job(ParametrosOnPolicy(dataset_versao="v1", aluno="local:aluno", amostras_por_prompt=2, limite=1, concorrencia=1, teto_usd=0))
+        await EngineOnPolicy(servico, corpus, repo, datasets).executar(job)
+        assert all([t.id for t in c.rastro] == ["LGPD:art.7", "LGPD:art.18"] for c in servico.casos) and servico.casos
 
     async def test_orcamento_para_e_consolida_o_que_houver(self, ambiente):
         corpus, repo, datasets = ambiente

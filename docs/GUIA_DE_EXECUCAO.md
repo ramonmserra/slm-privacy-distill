@@ -723,9 +723,12 @@ Um `POST` por condição. Anote o `id` de cada resposta.
 | C6 | `{ "modelo": "student", "com_rag": true, "k_rag": 3 }` | `[AV_C6]` |
 | C3 | `{ "modelo": "local:qwen3-1.7b-lgpd-xxxxxxxx" }` | `[AV_C3]` |
 | C2 | `{ "modelo": "local:qwen3-1.7b-lgpd-yyyyyyyy" }` | `[AV_C2]` |
+| C5 | `{ "modelo": "local:manaca-1b-base-lgpd-xxxxxxxx" }` | `[AV_C5]` |
 
-Para C3 e C2 use o `modelo_local_id` completo do `run.json`, com `local:`.
-`student` resolve para `LOCAL_MODEL_STUDENT` do `.env`, o Qwen base.
+Para C3, C2 e C5 use o `modelo_local_id` completo do `run.json`, com
+`local:`. `student` resolve para `LOCAL_MODEL_STUDENT` do `.env`, o Qwen
+base. C5 e C3 treinam no mesmo dataset, então o sufixo é igual; o que muda
+é o prefixo do modelo-base.
 
 Rode **uma avaliação de aluno por vez**: o Ollama em CPU não atende duas
 em paralelo com velocidade útil. C0 pode rodar junto com qualquer uma.
@@ -750,9 +753,13 @@ Mesmo endpoint, com o conjunto e a versão do dataset filtrado:
 |---|---|
 | C0 | `{ "modelo": "teacher", "conjunto": "held_out", "dataset_versao": "[VERSAO_FILTRADO]", "teto_usd": 20 }` |
 | C3 | `{ "modelo": "local:qwen3-1.7b-lgpd-xxxxxxxx", "conjunto": "held_out", "dataset_versao": "[VERSAO_FILTRADO]" }` |
+| C5 | `{ "modelo": "local:manaca-1b-base-lgpd-xxxxxxxx", "conjunto": "held_out", "dataset_versao": "[VERSAO_FILTRADO]" }` |
 | C1, C2, C6 | igual ao banco inicial, acrescentando `conjunto` e `dataset_versao` |
 
-Anote como `[HO_C0]`, `[HO_C3]` e assim por diante. Para um ensaio antes do
+Todas as condições, inclusive C2, usam o held-out do dataset **filtrado**:
+é o mesmo conjunto de itens que torna os runs comparáveis no passo 12.
+
+Anote como `[HO_C0]`, `[HO_C3]`, `[HO_C5]` e assim por diante. Para um ensaio antes do
 run inteiro, acrescente `"limite": 30`.
 
 **Esperado:** `itens` igual a `held_out.total` do manifesto; o resto como
@@ -824,6 +831,7 @@ aparece em texto e os números logo abaixo.
 | O filtro melhora o treino? | `[AV_C2]` | `[AV_C3]` |
 | RAG sem treino vale quanto? | `[AV_C1]` | `[AV_C6]` |
 | Treino supera RAG? | `[AV_C6]` | `[AV_C3]` |
+| O modelo-base muda o resultado (Qwen3 × Manacá)? | `[AV_C3]` | `[AV_C5]` |
 
 **Esperado:** `mesma_versao_da_medida: true`, `itens_em_comum: 34` (ou o
 tamanho do held-out), `delta_acuracia` com `delta_ic95_bootstrap`,
@@ -833,7 +841,14 @@ tamanho do held-out), `delta_acuracia` com `delta_ic95_bootstrap`,
 **O que avaliar:**
 
 - `mesma_versao_da_medida` precisa ser `true`; se for `false`, a comparação
-  não vale e um dos runs tem de ser refeito.
+  não vale e um dos runs tem de ser refeito. Exceção: runs com RAG (C6)
+  nunca têm a mesma versão dos runs sem RAG, porque o RAG entra no hash;
+  nesse par a leitura é indicativa.
+- Se a régua do juiz mudou depois de um run (prompt, rubrica ou rastro),
+  não é preciso gerar as respostas de novo: tag `avaliacao` →
+  `POST /api/v1/avaliacao/runs/{run_id}/rejulgar` cria um run novo com as
+  mesmas respostas e o veredito do juiz atual (custo só do juiz). O run
+  original fica intacto, e o novo traz `rejulgado_de` com o id dele.
 - No banco inicial o intervalo será largo (34 itens): use só como
   indicação. A conclusão estatística vem do held-out, onde
   `p_mcnemar` abaixo de 0,05 e intervalo que não cruza zero sustentam a
@@ -879,7 +894,9 @@ Resumo: `GET /api/v1/avaliacao/runs/{run_id}/calibracao`.
 
 Use a mesma definição da rubrica do juiz: "correto" é chegar à conclusão
 jurídica da referência; "grounded" é toda afirmação normativa ter lastro
-nos dispositivos de referência.
+no texto da lei: nos dispositivos de referência do item ou nos artigos que
+a própria resposta cita. O juiz recebe o texto dos dois grupos; citar um
+artigo não basta, o texto dele tem de dizer o que a resposta afirma.
 
 **Download:** na tela **Anotação**, bloco **Calibração do juiz neste
 run**, o botão **Baixar anotações (.json)** salva as anotações dos três

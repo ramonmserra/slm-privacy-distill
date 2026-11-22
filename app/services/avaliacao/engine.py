@@ -9,7 +9,9 @@ Ordem por item:
    (nao derruba o run): o item fica "sem resposta" e fora do denominador.
 2. VERIFICACAO deterministica: artigos mencionados na prosa existem no
    corpus? algum artigo da referencia foi citado?
-3. JULGAMENTO em lote (juiz cego, rastro = artigos de referencia).
+3. JULGAMENTO em lote (juiz cego, rastro = artigos de referencia + artigos
+   citados na resposta). `rejulgar` refaz so' esta etapa sobre as respostas
+   ja' gravadas de outro run, para quando a regua do juiz muda.
 4. DECISAO (codigo): `acerto`, `alucinacao`, `abstencao_adequada`.
 5. METRICAS com intervalo; `versao_da_medida` gravada no run.
 """
@@ -41,6 +43,7 @@ from app.schemas.comum import Etapa
 from app.schemas.sintese import StatusDoJob
 from app.services.avaliacao import conjuntos, metricas
 from app.services.avaliacao.llm_service import VERSAO_DO_JUIZ, AvaliacaoLLMService, CasoDeAvaliacao
+from app.services.avaliacao.rastro import rastro_do_juiz
 from app.services.corpus.ingestao import Corpus
 from app.services.corpus.referencias import artigos_mencionados
 from app.services.lotes import ExecutorDeLotes, dividir
@@ -79,6 +82,17 @@ def novo_run(parametros: ParametrosDeAvaliacao) -> RunDeAvaliacao:
     )
 
 
+def novo_run_rejulgado(origem: RunDeAvaliacao) -> RunDeAvaliacao:
+    """Run NOVO para o rejulgamento: mesmos parametros e mesmo modelo medido
+    do original (que fica intacto como evidencia), versao da medida atual."""
+
+    agora = _agora()
+    return RunDeAvaliacao(
+        id=uuid.uuid4().hex[:12], status=StatusDoJob.PENDENTE, parametros=origem.parametros, modelo=origem.modelo,
+        versao_da_medida=versao_da_medida(origem.parametros), rejulgado_de=origem.id, criado_em=agora, atualizado_em=agora,
+    )
+
+
 class Avaliador:
     def __init__(
         self,
@@ -100,9 +114,6 @@ class Avaliador:
         else:
             itens = conjuntos.carregar_banco_inicial()
         return itens[: parametros.limite] if parametros.limite else itens
-
-    def _rastro(self, item: ItemDeAvaliacao) -> list[TrechoDeContexto]:
-        return [TrechoDeContexto(id=a, texto=self._corpus.texto_do_artigo(a)) for a in item.artigos_referencia if self._corpus.existe(a)]
 
     def _contexto_rag(self, item: ItemDeAvaliacao, k: int) -> list[TrechoDeContexto]:
         return [TrechoDeContexto(id=a.id, texto=self._corpus.texto_do_artigo(a.id)) for a in self._corpus.buscar(item.pergunta, k)]
@@ -150,6 +161,24 @@ class Avaliador:
             if orcamento is None:
                 orcamento = await self._fase_de_julgamento(run, resultados)
 
+        return self._concluir(run, resultados, orcamento)
+
+    async def rejulgar(self, run: RunDeAvaliacao, origem: list[ResultadoDoItem]) -> RunDeAvaliacao:
+        """Julga de novo as respostas JA' GRAVADAS de outro run, com o juiz e
+        o rastro atuais. O modelo medido nao e' chamado: as respostas sao as
+        mesmas, so' o veredito muda. O custo do run e' o do juiz."""
+
+        resultados = [ResultadoDoItem(item=r.item, resposta=r.resposta) for r in origem]
+        run.itens = len(resultados)
+        run.respondidos = sum(1 for r in resultados if r.resposta.erro is None)
+        run.status = StatusDoJob.EXECUTANDO
+        run.modelo_juiz = getattr(self._servico, "modelo_juiz", "")
+        self._salvar(run)
+        with etapa_scope(Etapa.AVALIACAO), job_scope(run.id, run.parametros.teto_usd):
+            orcamento = await self._fase_de_julgamento(run, resultados)
+        return self._concluir(run, resultados, orcamento)
+
+    def _concluir(self, run: RunDeAvaliacao, resultados: list[ResultadoDoItem], orcamento: str | None) -> RunDeAvaliacao:
         for r in resultados:
             metricas.decidir(r)
         self._repositorio.acrescentar_itens(run.id, resultados)
@@ -201,7 +230,7 @@ class Avaliador:
         run.lotes_do_juiz = len(lotes)
 
         async def chamar(lote: list[ResultadoDoItem]) -> list[VereditoDeAvaliacao]:
-            casos = [CasoDeAvaliacao(indice=i + 1, item=r.item, resposta=r.resposta.texto, rastro=self._rastro(r.item)) for i, r in enumerate(lote)]
+            casos = [CasoDeAvaliacao(indice=i + 1, item=r.item, resposta=r.resposta.texto, rastro=rastro_do_juiz(self._corpus, r.item.artigos_referencia, r.resposta.texto)) for i, r in enumerate(lote)]
             return await self._servico.julgar(casos)
 
         def consolidar(lote: list[ResultadoDoItem], vereditos: list[VereditoDeAvaliacao]) -> None:
