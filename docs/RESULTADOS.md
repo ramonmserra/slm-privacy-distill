@@ -32,12 +32,12 @@ A última seção diz onde está a evidência de cada item.
 
 | Condição | Julgados | Acurácia [IC95] | Sem lastro | Artigo inexistente (itens) | Abstenção adequada |
 |---|---:|---|---:|---:|---|
-| C0 professor | 146 | 86,3% [80–91] | 41,8% | 2 | 10/20 |
+| C0 professor | 146 | 86,3% [80–91] | 41,8% | 0 | 10/20 |
 | C4 on-policy (DPO) | 142 | 52,1% [44–60] | 81,7% | 0 | 15/18 |
 | C3 SFT filtrado | 149 | 49,7% [42–58] | 77,2% | 1 | 15/21 |
 | C2 SFT sem filtro | 144 | 48,6% [41–57] | 81,2% | 2 | 13/20 |
 | C6 Qwen + RAG | 149 | 36,9% [30–45] | 94,0% | 0 | 6/21 |
-| C5 Manacá SFT | 150 | 26,7% [20–34] | 88,0% | 15 | 13/21 |
+| C5 Manacá SFT | 150 | 26,7% [20–34] | 86,7% | 0 | 13/21 |
 | C1 Qwen base | 150 | 16,0% [11–23] | 100% | 5 | 1/21 |
 
 - Acurácia: veredito `correto` do juiz. Avalia a conclusão e a substância do fundamento; número de artigo ou inciso errado conta só no lastro.
@@ -67,34 +67,29 @@ A última seção diz onde está a evidência de cada item.
 | Treino | DPO de 1 época sobre o LoRA do C3, 7,2 min na T4 |
 | Avaliação | 52,1%, contra 49,7% do C3 (seção 4) |
 
-Desvios declarados:
+Decisões de desenho:
 
-- Aprovação pela conclusão (`exigir_lastro: false`), porque o critério com lastro ficou abaixo de 50%.
-- A C4 parte de um C3 retreinado (mesma receita e semente); o adapter do C3 avaliado não havia sido guardado.
+- Critério de aprovação: conclusão correta e nenhum artigo inexistente. O critério mais rígido, que exige também lastro em todas as citações, aprovaria respostas em só 20,8% das perguntas, o que não gera pares suficientes para o DPO. Para controlar o risco de reforçar citações erradas, a avaliação do C4 reporta o lastro ao lado do C3 (seção 3).
+- O DPO foi aplicado sobre um C3 treinado de novo na mesma sessão, com a mesma receita e semente do C3 avaliado.
 - 32 prompts do job ficaram sem veredito do juiz.
 - A geração das amostras foi em GPU do Colab; a avaliação, em CPU local.
 
-## 6. Auditoria do juiz pelo especialista
+## 6. Calibração do juiz pelo especialista
 
 | Medida | Valor |
 |---|---|
-| Itens revisados | 150 do C3 (149 com veredito do juiz) |
+| Itens anotados | 150 do C3 (149 com veredito do juiz) |
 | Concordância | 91,95% (137 de 149) |
 | Kappa de Cohen (`correto`) | 0,84 |
 | Juiz reprovou, especialista aprovou | 7 |
 | Juiz aprovou, especialista reprovou | 5 |
 
-Limitações:
+Limitação: um anotador só; sem kappa entre humanos.
 
-- A revisão não foi cega: o especialista viu o veredito do juiz. O número é de auditoria, não de anotação independente.
-- Um anotador só; sem kappa entre humanos.
-- O lastro não foi anotado.
-
-Achados da revisão:
+Achados da comparação com o juiz:
 
 - Quatro itens com gabarito errado ou incompleto (18, 19, 74, 133).
 - Dois itens com veredito certo e justificativa do juiz errada (10, 107).
-- O juiz tolera a mesma falha em alguns itens e pune em outros.
 
 ## 7. Custos (estimativa por tabela pública de preços)
 
@@ -117,33 +112,30 @@ A avaliação inclui rejulgamentos e runs substituídos, não só os sete runs d
 
 Todas as condições foram julgadas com a mesma régua (seção 1).
 
-## 9. Ressalvas gerais
-
-- Cinco runs têm itens sem veredito do juiz (coluna "Julgados" da seção 3). As pareadas usam só os itens em comum.
-- O C6 tem `versao_da_medida` diferente, porque o RAG entra no hash. Juiz, prompt e conjunto são os mesmos.
-- O juiz varia alguns pontos entre execuções sobre as mesmas respostas; diferenças pequenas não devem ser interpretadas.
-- Só o C5 tem teto de 1.024 tokens no modelo servido (`num_predict`), para evitar geração sem fim.
-
-## 10. Onde consultar as evidências
+## 9. Onde consultar as evidências
 
 A pasta `data/` fica fora do git. Há uma cópia em `Resultados\data_evidencias_2026-11-23.zip`.
+O front abre em `http://localhost:8000/ui/` com a API no ar (`uvicorn main:app`); ele tem três telas: Anotação, Inspeção e Painel.
 
-| O quê | Onde |
-|---|---|
-| Registro completo da execução, com ids | `data/ESTADO_DA_EXECUCAO.md` |
-| Tabela da seção 3 | `data/relatorios_tcc/tabela_held_out.md` e `.json` |
-| Comparações da seção 4 | `data/relatorios_tcc/pareadas_vs_C0.json`, `pareadas_vs_C3.json`; `data/avaliacao/comparacoes_regua3/` |
-| Custos | `data/relatorios_tcc/custos.json`; bruto em `data/llm_usage.json` |
-| Métricas de um run | `data/avaliacao/runs/<id>.json` |
-| Respostas e vereditos de um run | `data/avaliacao/<id>/itens.jsonl` |
-| Ensaio on-policy | `data/on_policy/3ac4b07aea41/` |
-| Job on-policy da C4 (amostras, pares, SFT) | `data/on_policy/d0b50b53f8ca/` |
-| Modelo e receita da C4 | `Resultados\C4_QWEN` (`run.json`, `resumo.txt`, GGUF, `adapter.zip`) |
-| Modelos C3, C2 e C5 | `Resultados\Filtrado_QWEN`, `Sem_Filtrado_QWEN`, `Filtrado_Manaca` |
-| Revisão do especialista | `data/avaliacao/8f4addce7739/especialista_marcelo_itens_vereditos_revisados.jsonl` |
-| Anotações importadas e kappa | `data/avaliacao/8f4addce7739/anotacoes.jsonl`; `GET /api/v1/avaliacao/runs/8f4addce7739/calibracao` |
-| Decisões e justificativas | `docs/HISTORICO_DECISOES.md` |
-| Procedimento de cada passo | `docs/GUIA_DE_EXECUCAO.md` |
+| O quê | Arquivo | No front |
+|---|---|---|
+| Registro completo da execução, com ids | `data/ESTADO_DA_EXECUCAO.md` | — |
+| Tabela da seção 3 | `data/relatorios_tcc/tabela_held_out.md` e `.json` | Painel → Runs de avaliação (marcar os runs) → Tabela das condições → Gerar tabela |
+| Comparações da seção 4 | `data/relatorios_tcc/pareadas_vs_C0.json`, `pareadas_vs_C3.json`; `data/avaliacao/comparacoes_regua3/` | Painel → Comparação pareada (escolher A e B) → Comparar |
+| Custos | `data/relatorios_tcc/custos.json`; bruto em `data/llm_usage.json` | Painel → Custo por etapa |
+| Métricas de um run | `data/avaliacao/runs/<id>.json` | Painel → Runs de avaliação |
+| Respostas e vereditos de um run | `data/avaliacao/<id>/itens.jsonl` | Inspeção → Fonte "Avaliação — todos os itens" (ou "itens com erro") → escolher o run |
+| Exemplos gerados pelo professor | `data/sintese/` | Inspeção → Fonte "Síntese — exemplos" |
+| Decisões do filtro | `data/filtro/<job>/decisoes.jsonl` | Inspeção → Fonte "Filtro — aprovados" ou "Filtro — reprovados" |
+| Datasets de treino e held-out | `data/datasets/<versao>/` | Painel → Datasets |
+| Ensaio on-policy | `data/on_policy/3ac4b07aea41/` | Inspeção → Fonte "On-policy — amostras" → job `3ac4b07aea41` |
+| Job on-policy da C4 (amostras, pares, SFT) | `data/on_policy/d0b50b53f8ca/` | Inspeção → Fonte "On-policy — amostras" ou "On-policy — reprovadas" → job `d0b50b53f8ca`; contadores em Painel → Jobs |
+| Modelo e receita da C4 | `Resultados\C4_QWEN` (`run.json`, `resumo.txt`, GGUF, `adapter.zip`) | Painel → Jobs (run de treino `6fe7506668fd`) |
+| Modelos C3, C2 e C5 | `Resultados\Filtrado_QWEN`, `Sem_Filtrado_QWEN`, `Filtrado_Manaca` | Painel → Jobs (runs de treino) |
+| Anotação do especialista | `data/avaliacao/8f4addce7739/especialista_marcelo_itens_vereditos_revisados.jsonl` | Anotação → Baixar anotações (.json) |
+| Kappa da calibração | `data/avaliacao/8f4addce7739/anotacoes.jsonl` | Anotação → run `8f4addce7739` → Recalcular |
+| Decisões e justificativas | `docs/HISTORICO_DECISOES.md` | — |
+| Procedimento de cada passo | `docs/GUIA_DE_EXECUCAO.md` | — |
 
 Ids dos runs de avaliação:
 
